@@ -9,33 +9,48 @@ import time
 import json
 import os
 
+
+def get_absolute_paths_to_files_in_directory(directory):
+    abspath_to_files = []
+    for root, dirs, files in os.walk(os.path.abspath(directory)):
+        for file in files:
+            abspath_to_files.append(os.path.join(root, file))
+    return abspath_to_files
+
+
 def add_torrent(ses, filename, options):
     atp = lt.add_torrent_params()
 
-    info = lt.torrent_info(filename)
-    atp.ti = info
+    if filename.endswith("magnet:"):  # TODO: much better ways to do this
+        atp = lt.parse_magnet_uri(filename)
+    else:
+        info = lt.torrent_info(filename)
+        atp.ti = info
 
     atp.save_path = options.save_path
     atp.storage_mode = lt.storage_mode_t.storage_mode_sparse
-    atp.flags |= lt.torrent_flags.duplicate_is_error \
-        | lt.torrent_flags.auto_managed \
-        | lt.torrent_flags.duplicate_is_error \
+    atp.flags |= (
+        lt.torrent_flags.duplicate_is_error
+        | lt.torrent_flags.auto_managed
+        | lt.torrent_flags.duplicate_is_error
         | lt.torrent_flags.upload_mode
+    )
 
     ses.async_add_torrent(atp)
 
+
 def get_torrent_info(info):
     attributes = [
-        'name',
-        'comment',
-        'creator',
-        'total_size',
-        'piece_length',
-        'num_pieces',
-        'info_hash',
-        'num_files',
-        'priv',
-        'creation_date',
+        "name",
+        "comment",
+        "creator",
+        "total_size",
+        "piece_length",
+        "num_pieces",
+        "info_hash",
+        "num_files",
+        "priv",
+        "creation_date",
     ]
 
     entry = {}
@@ -45,18 +60,19 @@ def get_torrent_info(info):
 
     return entry
 
+
 def get_file_info(file):
     attributes = [
-        'path',
-        'symlink_path',
-        'offset',
-        'size',
-        'mtime',
-        'filehash',
-        'pad_file',
-        'hidden_attribute',
-        'executable_attribute',
-        'symlink_attribute',
+        "path",
+        "symlink_path",
+        "offset",
+        "size",
+        "mtime",
+        "filehash",
+        "pad_file",
+        "hidden_attribute",
+        "executable_attribute",
+        "symlink_attribute",
     ]
 
     entry = {}
@@ -66,50 +82,80 @@ def get_file_info(file):
 
     return entry
 
+
 def main():
     from optparse import OptionParser
 
     parser = OptionParser()
 
-    parser.add_option('-p', '--port', type='int', help='set listening port')
+    parser.add_option("-p", "--port", type="int", help="set listening port")
 
     parser.add_option(
-        '-i', '--listen-interface', type='string',
-        help='set interface for incoming connections', )
+        "-i",
+        "--listen-interface",
+        type="string",
+        help="set interface for incoming connections",
+    )
 
     parser.add_option(
-        '-o', '--outgoing-interface', type='string',
-        help='set interface for outgoing connections')
+        "-o",
+        "--outgoing-interface",
+        type="string",
+        help="set interface for outgoing connections",
+    )
 
     parser.add_option(
-        '-d', '--max-download-rate', type='float',
-        help='the maximum download rate given in kB/s. 0 means infinite.')
+        "-d",
+        "--max-download-rate",
+        type="float",
+        help="the maximum download rate given in kB/s. 0 means infinite.",
+    )
 
     parser.add_option(
-        '-u', '--max-upload-rate', type='float',
-        help='the maximum upload rate given in kB/s. 0 means infinite.')
+        "-u",
+        "--max-upload-rate",
+        type="float",
+        help="the maximum upload rate given in kB/s. 0 means infinite.",
+    )
 
     parser.add_option(
-        '-c', '--connections_limit', type='int',
-        help='the global limit on the number of connections opened.')
+        "-c",
+        "--connections_limit",
+        type="int",
+        help="the global limit on the number of connections opened.",
+    )
 
     parser.add_option(
-        '-s', '--save-path', type='string',
-        help='the path where the downloaded file/folder should be placed.')
+        "-s",
+        "--save-path",
+        type="string",
+        help="the path where the downloaded file/folder should be placed.",
+    )
 
     parser.add_option(
-        '-r', '--proxy-host', type='string',
-        help='sets HTTP proxy host and port (separated by \':\')')
+        "-l",
+        "--load-path",
+        type="string",
+        help="the path where the downloaded file/folder should be placed.",
+    )
+
+    parser.add_option(
+        "-r",
+        "--proxy-host",
+        type="string",
+        help="sets HTTP proxy host and port (separated by ':')",
+    )
 
     parser.set_defaults(
         port=6881,
-        listen_interface='0.0.0.0',
-        outgoing_interface='',
+        listen_interface="0.0.0.0",
+        outgoing_interface="",
         max_download_rate=0,
         max_upload_rate=0,
-        connections_limit=800, # limit increased
-        save_path='.',
-        proxy_host='',
+        connections_limit=800,  # limit increased
+        save_path="/tmp",
+        load_path="/opt",
+        proxy_host="",
     )
 
     (options, args) = parser.parse_args()
@@ -126,43 +172,49 @@ def main():
         options.max_download_rate = -1
 
     settings = {
-        'user_agent': 'libtorrent/' + lt.__version__ + ' (https://torrent.fish/)',
-        'listen_interfaces': '%s:%d' % (options.listen_interface, options.port),
-        'download_rate_limit': int(options.max_download_rate),
-        'upload_rate_limit': int(options.max_upload_rate),
-        'connections_limit': int(options.connections_limit),
-        'dht_bootstrap_nodes': 'router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,',
-        'alert_mask': lt.alert.category_t.all_categories, # TODO: decrease?
-        'outgoing_interfaces': options.outgoing_interface,
-        'announce_to_all_tiers': True,
-        'announce_to_all_trackers': True,
-        'auto_manage_interval': 30, # increased to default
-        'auto_scrape_interval': 1800, # increased to default
-        'auto_scrape_min_interval': 300, # increased to default
-        'max_failcount': 1,
-        'aio_threads': 8,
-        'checking_mem_usage': 2048,
+        "user_agent": "libtorrent/%s (https://torrent.fish/)" % (lt.__version__),
+        "listen_interfaces": "%s:%d" % (options.listen_interface, options.port),
+        "download_rate_limit": int(options.max_download_rate),
+        "upload_rate_limit": int(options.max_upload_rate),
+        "connections_limit": int(options.connections_limit),
+        "dht_bootstrap_nodes": "router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,",
+        "alert_mask": lt.alert.category_t.all_categories,  # TODO: decrease?
+        "outgoing_interfaces": options.outgoing_interface,
+        "announce_to_all_tiers": True,
+        "announce_to_all_trackers": True,
+        "auto_manage_interval": 30,  # increased to default
+        "auto_scrape_interval": 1800,  # increased to default
+        "auto_scrape_min_interval": 300,  # increased to default
+        "max_failcount": 1,
+        "aio_threads": 8,
+        "checking_mem_usage": 2048,
     }
 
-    if options.proxy_host != '':
-        settings['proxy_hostname'] = options.proxy_host.split(':')[0]
-        settings['proxy_type'] = lt.proxy_type_t.http
-        settings['proxy_port'] = options.proxy_host.split(':')[1]
+    if options.proxy_host != "":
+        settings["proxy_hostname"] = options.proxy_host.split(":")[0]
+        settings["proxy_type"] = lt.proxy_type_t.http
+        settings["proxy_port"] = options.proxy_host.split(":")[1]
 
     ses = lt.session(settings)
 
     # map torrent_handle to torrent_status
     torrents = {}
 
-    for f in args:
-        print('Adding %s' % (f))
-        add_torrent(ses, f, options)
+    torrent_files = get_absolute_paths_to_files_in_directory(options.load_path)
+    if len(torrent_files) < 1:
+        print("No files found. Quitting ...")
+        exit(1)
 
-    # process torrents data
+    for torrent_file in torrent_files:
+        print("Adding %s" % (torrent_file))
+        add_torrent(ses, torrent_file, options)
+
+    # fetch and display debug logs
     while True:
         alerts = ses.pop_alerts()
         for a in alerts:
             print(a)
         time.sleep(0.1)
+
 
 main()
