@@ -18,3 +18,13 @@ RUN ln -snf "/usr/share/zoneinfo/UTC" /etc/localtime && echo "UTC" > /etc/timezo
         python3-libtorrent && \
     # save some space 
     rm -rf /var/lib/apt/lists/*
+
+# create less-privileged user
+RUN useradd --create-home fish && echo "fish:fish" | chpasswd
+
+# copy torrent-fish.py into Docker
+COPY torrent-fish.py /home/fish/torrent-fish.py
+
+# set environment
+USER fish
+ENTRYPOINT ["python3", "/home/fish/torrent-fish.py"]
