@@ -2,6 +2,7 @@
 
 # refer:
 # https://gist.github.com/francoism90/4db9efa5af546d831ca47208e58f3364
+# https://github.com/arvidn/libtorrent/issues/2239
 
 import libtorrent as lt
 import time
@@ -106,7 +107,7 @@ def main():
         outgoing_interface='',
         max_download_rate=0,
         max_upload_rate=0,
-        connections_limit=400,
+        connections_limit=800, # limit increased
         save_path='.',
         proxy_host='',
     )
@@ -131,13 +132,13 @@ def main():
         'upload_rate_limit': int(options.max_upload_rate),
         'connections_limit': int(options.connections_limit),
         'dht_bootstrap_nodes': 'router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,',
-        'alert_mask': lt.alert.category_t.all_categories,
+        'alert_mask': lt.alert.category_t.all_categories, # TODO: decrease?
         'outgoing_interfaces': options.outgoing_interface,
         'announce_to_all_tiers': True,
         'announce_to_all_trackers': True,
-        'auto_manage_interval': 5,
-        'auto_scrape_interval': 0,
-        'auto_scrape_min_interval': 0,
+        'auto_manage_interval': 30, # increased to default
+        'auto_scrape_interval': 1800, # increased to default
+        'auto_scrape_min_interval': 300, # increased to default
         'max_failcount': 1,
         'aio_threads': 8,
         'checking_mem_usage': 2048,
