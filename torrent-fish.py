@@ -38,28 +38,6 @@ def add_torrent(ses, filename, options):
     ses.async_add_torrent(atp)
 
 
-def get_torrent_info(info):
-    attributes = [
-        "name",
-        "comment",
-        "creator",
-        "total_size",
-        "piece_length",
-        "num_pieces",
-        "info_hash",
-        "num_files",
-        "priv",
-        "creation_date",
-    ]
-
-    entry = {}
-
-    for attribute in attributes:
-        entry[attribute] = getattr(info, attribute, None)()
-
-    return entry
-
-
 def get_file_info(file):
     attributes = [
         "path",
@@ -177,6 +155,7 @@ def main():
         "upload_rate_limit": int(options.max_upload_rate),
         "connections_limit": int(options.connections_limit),
         "dht_bootstrap_nodes": "router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,",
+        'alert_mask': lt.alert.category_t.all_categories,
         "outgoing_interfaces": options.outgoing_interface,
         "announce_to_all_tiers": True,
         "announce_to_all_trackers": True,
@@ -195,23 +174,24 @@ def main():
 
     ses = lt.session(settings)
 
-    # map torrent_handle to torrent_status
-    torrent_states = {}
-
     torrent_files = get_absolute_paths_to_files_in_directory(options.load_path)
     if len(torrent_files) < 1:
-        print("[torrent-fish] No files found. Quitting ...")
+        print("No files found. Quitting ...")
         exit(1)
 
     for torrent_file in torrent_files:
-        print("[torrent-fish] Adding %s" % (torrent_file))
+        print("Adding %s" % (torrent_file))
         add_torrent(ses, torrent_file, options)
 
     # fetch and display debug logs
     while True:
         alerts = ses.pop_alerts()
         for a in alerts:
-            print(f"[libtorrent] {a}")
+            # print(f"[libtorrent] {a}")
+            if isinstance(a, lt.state_update_alert):
+                for s in a.status:
+                    print("%s changed state to " % (s.handle, s))
+
         time.sleep(0.1)
 
 
