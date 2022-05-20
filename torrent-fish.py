@@ -155,7 +155,6 @@ def main():
         "upload_rate_limit": int(options.max_upload_rate),
         "connections_limit": int(options.connections_limit),
         "dht_bootstrap_nodes": "router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,",
-        'alert_mask': lt.alert.category_t.all_categories,
         "outgoing_interfaces": options.outgoing_interface,
         "announce_to_all_tiers": True,
         "announce_to_all_trackers": True,
