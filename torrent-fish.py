@@ -31,10 +31,9 @@ def add_torrent(ses, filename, options):
     atp.storage_mode = lt.storage_mode_t.storage_mode_sparse
     atp.flags |= (
         lt.torrent_flags.duplicate_is_error
-        | lt.torrent_flags.auto_managed
         | lt.torrent_flags.duplicate_is_error
         | lt.torrent_flags.upload_mode
-    )
+    )  # removed | lt.torrent_flags.auto_managed
 
     ses.async_add_torrent(atp)
 
