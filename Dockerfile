@@ -27,4 +27,4 @@ COPY torrent-fish.py /home/fish/torrent-fish.py
 
 # set environment
 USER fish
-ENTRYPOINT ["python3", "/home/fish/torrent-fish.py"]
+ENTRYPOINT ["python3", "-u", "/home/fish/torrent-fish.py"]

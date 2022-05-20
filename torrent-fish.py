@@ -176,21 +176,18 @@ def main():
 
     torrent_files = get_absolute_paths_to_files_in_directory(options.load_path)
     if len(torrent_files) < 1:
-        print("No files found. Quitting ...")
+        print("[torrent-fish] No files found. Quitting ...")
         exit(1)
 
     for torrent_file in torrent_files:
-        print("Adding %s" % (torrent_file))
+        print("[torrent-fish] Adding %s" % (torrent_file))
         add_torrent(ses, torrent_file, options)
 
     # fetch and display debug logs
     while True:
         alerts = ses.pop_alerts()
         for a in alerts:
-            # print(f"[libtorrent] {a}")
-            if isinstance(a, lt.state_update_alert):
-                for s in a.status:
-                    print("%s changed state to " % (s.handle, s))
+            print(f"[libtorrent] {a}")
 
         time.sleep(0.1)
 
