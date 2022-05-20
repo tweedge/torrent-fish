@@ -27,6 +27,7 @@ def add_torrent(ses, filename, options):
     atp.save_path = options.save_path
     atp.storage_mode = lt.storage_mode_t.storage_mode_sparse
     atp.flags |= lt.torrent_flags.upload_mode
+    atp.auto_managed = False
 
     handle = ses.add_torrent(atp)
 
