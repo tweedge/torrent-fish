@@ -177,11 +177,10 @@ def main():
         "upload_rate_limit": int(options.max_upload_rate),
         "connections_limit": int(options.connections_limit),
         "dht_bootstrap_nodes": "router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,",
-        "alert_mask": lt.alert.category_t.all_categories,  # TODO: decrease?
         "outgoing_interfaces": options.outgoing_interface,
         "announce_to_all_tiers": True,
         "announce_to_all_trackers": True,
-        "auto_manage_interval": 30,  # increased to default
+        "auto_manage_interval": -1,
         "auto_scrape_interval": 1800,  # increased to default
         "auto_scrape_min_interval": 300,  # increased to default
         "max_failcount": 1,
@@ -197,22 +196,22 @@ def main():
     ses = lt.session(settings)
 
     # map torrent_handle to torrent_status
-    torrents = {}
+    torrent_states = {}
 
     torrent_files = get_absolute_paths_to_files_in_directory(options.load_path)
     if len(torrent_files) < 1:
-        print("No files found. Quitting ...")
+        print("[torrent-fish] No files found. Quitting ...")
         exit(1)
 
     for torrent_file in torrent_files:
-        print("Adding %s" % (torrent_file))
+        print("[torrent-fish] Adding %s" % (torrent_file))
         add_torrent(ses, torrent_file, options)
 
     # fetch and display debug logs
     while True:
         alerts = ses.pop_alerts()
         for a in alerts:
-            print(a)
+            print(f"[libtorrent] {a}")
         time.sleep(0.1)
 
 
