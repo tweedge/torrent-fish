@@ -21,23 +21,17 @@ def get_absolute_paths_to_files_in_directory(directory):
 def add_torrent(ses, filename, options):
     atp = lt.add_torrent_params()
 
-    if filename.endswith("magnet:"):  # TODO: much better ways to do this
-        atp = lt.parse_magnet_uri(filename)
-    else:
-        info = lt.torrent_info(filename)
-        atp.ti = info
+    info = lt.torrent_info(filename)
+    atp.ti = info
 
     atp.save_path = options.save_path
     atp.storage_mode = lt.storage_mode_t.storage_mode_sparse
-    atp.flags |= (
-        lt.torrent_flags.duplicate_is_error
-        | lt.torrent_flags.duplicate_is_error
-        | lt.torrent_flags.upload_mode
-        | lt.torrent_flags.auto_managed
-        | lt.torrent_flags.auto_managed
-    )
+    atp.flags |= lt.torrent_flags.upload_mode
 
-    ses.async_add_torrent(atp)
+    handle = ses.add_torrent(atp)
+
+    for i in range(info.num_pieces()):
+        handle.piece_priority(i, 0)
 
 
 def get_file_info(file):
