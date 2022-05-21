@@ -23,8 +23,8 @@ For rogue archivists, you can slap a webseed/getright tag on any existing magnet
 [libtorrent](https://www.libtorrent.org/) is a popular library that implements BitTorrent - you might use a BitTorrent client that also uses libtorrent, such as [Deluge](https://deluge-torrent.org/) or [qBittorrent](https://www.qbittorrent.org/). torrent-fish wraps libtorrent with pretty simple settings applied to every torrent:
 
 * Each piece's priority is set to 0 (do not download)
-* `upload_mode` flag is enabled, so torrents are active but not download data
-* `auto_managed` flag is disabled, so torrents may not enter a downloading state automatically
+* `upload_mode` flag is enabled, so torrents are active but not downloading data
+* `auto_managed` flag is disabled, so torrents should not enter a downloading state automatically
 
 It should be possible to accomplish the desired results by using *either* setting the piece priorities *or* mucking about with the flags for each torrent, but I occasionally ran into issues where libtorrent would begin to request pieces (BitTorrent is supposed to download missing/corrupt pieces, after all!) and doing both doesn't seem to cause any problems.
 
