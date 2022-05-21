@@ -4,11 +4,7 @@
 [![License](https://img.shields.io/github/license/tweedge/unishox2-py3)](https://github.com/tweedge/unishox2-py3)
 [![Code Style](https://img.shields.io/badge/code%20style-black-black)](https://github.com/psf/black)
 
-torrent-fish is a cheap-to-run, metadata-only BitTorrent peer built with libtorrent.
-
-When provisioned with torrent files, torrent-fish will join each swarm and happily send the torrent files to any peer that requests them (ex. peers with a magnet link that need the torrent).  **torrent-fish will *not* download or upload content from the torrents you give it and does *not* speed up torrent transfers.** Each piece has its priority set to zero, so torrent-fish will not download any pieces. If any piece is requested from torrent-fish by a peer, torrent-fish will have no data to reply with.
-
-So, what's the point?
+torrent-fish is a *metadata-only* BitTorrent peer built with libtorrent. It's designed to help keep torrents and magnets (but *especially magnets*) which rely on [HTTP Seeding](https://wiki.vuze.com/w/HTTP_Seeding) healthy, without the overhead of running other peers or seeds.
 
 ### Torrenting for Archivists
 
@@ -21,6 +17,18 @@ Storage as commodity, with no servers, and especially with a CDN you can get pre
 Yes, with some gaps. Torrents -> webseeds is supported end-to-end. Magnets -> webseeds are not, the magnet specification *relies* on a swarm being alive. This is why IA distributes torrents instead of magnets, they can skip that deficiency.
 
 For rogue archivists, you can slap a webseed/getright tag on any existing magnet (or create a new magnet, etc.) and clients that use your amended magnet will accept the HTTP Seed as a new source - but that means you need to keep a peer online. Enter torrent-fish - staying connected to swarms, to perform the only essential duty of a peer, with the least possible cost.
+
+### Under the Hood
+
+[libtorrent](https://www.libtorrent.org/) is a popular library that implements BitTorrent - you might use a BitTorrent client that also uses libtorrent, such as [Deluge](https://deluge-torrent.org/) or [qBittorrent](https://www.qbittorrent.org/). torrent-fish wraps libtorrent with pretty simple settings applied to every torrent:
+
+* Each piece's priority is set to 0 (do not download)
+* `upload_mode` flag is enabled, so torrents are active but not download data
+* `auto_managed` flag is disabled, so torrents may not enter a downloading state automatically
+
+It should be possible to accomplish the desired results by using *either* setting the piece priorities *or* mucking about with the flags for each torrent, but I occasionally ran into issues where libtorrent would begin to request pieces (BitTorrent is supposed to download missing/corrupt pieces, after all!) and doing both doesn't seem to cause any problems.
+
+The script was originally a fork of François M.'s [retrieve.py](https://gist.github.com/francoism90/4db9efa5af546d831ca47208e58f3364) due to his clean usage of [libtorrent's bindings for Python](https://www.libtorrent.org/python_binding.html), though we accomplish very different goals with libtorrent. Francois' script gets a torrent from a magnet and exits; torrent-fish stays alive for as long as possible to convert any peer's magnet into a torrent.
 
 ### Resource Efficiency
 
