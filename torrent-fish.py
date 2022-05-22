@@ -100,13 +100,6 @@ def main():
     )
 
     parser.add_option(
-        "-s",
-        "--save-path",
-        type="string",
-        help="the path where the downloaded file/folder should be placed.",
-    )
-
-    parser.add_option(
         "-l",
         "--load-path",
         type="string",
@@ -127,7 +120,7 @@ def main():
         max_download_rate=0,
         max_upload_rate=0,
         connections_limit=800,  # limit increased
-        save_path="/tmp",
+        save_path="/dev/null", # this should never be used or relevant
         load_path="/opt",
         proxy_host="",
     )
