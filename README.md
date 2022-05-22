@@ -89,9 +89,6 @@ Options:
                         infinite.
   -c CONNECTIONS_LIMIT, --connections_limit=CONNECTIONS_LIMIT
                         the global limit on the number of connections opened.
-  -s SAVE_PATH, --save-path=SAVE_PATH
-                        the path where the downloaded file/folder should be
-                        placed.
   -l LOAD_PATH, --load-path=LOAD_PATH
                         the path where the downloaded file/folder should be
                         placed.
