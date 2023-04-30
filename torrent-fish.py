@@ -154,6 +154,7 @@ def main():
         "max_failcount": 1,
         "aio_threads": 8,
         "checking_mem_usage": 2048,
+        "enable_upnp": False,
     }
 
     if options.proxy_host != "":
