@@ -103,7 +103,14 @@ def main():
         "-l",
         "--load-path",
         type="string",
-        help="the path where the downloaded file/folder should be placed.",
+        help="the path to load torrent files from.",
+    )
+
+    parser.add_option(
+        "-s",
+        "--save-path",
+        type="string",
+        help="must be a valid folder BUT won't be used to download anything.",
     )
 
     parser.add_option(
@@ -120,7 +127,7 @@ def main():
         max_download_rate=0,
         max_upload_rate=0,
         connections_limit=800,  # limit increased
-        save_path="/dev/null", # this should never be used or relevant
+        save_path="/opt",  # this should(tm) never be used for storage
         load_path="/opt",
         proxy_host="",
     )
