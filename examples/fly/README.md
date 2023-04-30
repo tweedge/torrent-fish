@@ -8,7 +8,7 @@ However, this was all I needed to:
 * Build them into a container automatically using Fly,
 * Launch a copy of torrent-fish that automatically registers as a peer to every tracker, DHT, etc., and
 * Serves the included torrent metadata for a measly $2-4/mo
-  * If you need a public IPv4 address - and you would - then you'd need to pony up an extra fee
+  * If you need a public IPv4 address - and you would to support IPv4 clients - then you'd need to pony up an extra fee
 
 ...as of April 2023.
 
