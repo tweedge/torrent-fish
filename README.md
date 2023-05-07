@@ -96,12 +96,6 @@ Options:
                         sets HTTP proxy host and port (separated by ':')
 ```
 
-#### Examples
-
-Artifacts to help bootstrap torrent-fish in the following environments are included in the "examples" directory:
-
-* Fly ([https://fly.io](https://fly.io/))
-
 #### Efficiency
 
 The Docker container for torrent-fish is very small, only about 40MB compressed. When run in a [Firecracker microVM](https://firecracker-microvm.github.io/) on [Fly](https://fly.io/), the entire torrent-fish instance consumes about 80MB of RAM and several KB/s of bandwidth. This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022).
