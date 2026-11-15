@@ -136,9 +136,14 @@ jobs:
 
       # Pushing an image does not update the Docker Hub overview; sync it from
       # the repository README so the Hub page stays in step with Git.
+      #
+      # This is cosmetic: a description update failure (e.g. a token that lacks
+      # the delete scope Docker Hub requires for metadata edits) should not fail
+      # an otherwise-good image publish, so it is non-blocking.
       - name: Update Docker Hub description
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: peter-evans/dockerhub-description@v4
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
