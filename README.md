@@ -102,7 +102,7 @@ Options:
 
 #### Efficiency
 
-The Docker container for torrent-fish is very small, only about 40MB compressed. When run in a [Firecracker microVM](https://firecracker-microvm.github.io/) on [Fly](https://fly.io/), the entire torrent-fish instance consumes about 80MB of RAM and several KB/s of bandwidth. This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022).
+The Docker container for torrent-fish is very small, only about 28MB compressed. It's built from a [distroless](https://github.com/GoogleContainerTools/distroless) Python 3.11 base as a non-root user, so the runtime image contains only Python and the libtorrent wheel - no shell, package manager, or build toolchain. When run in a [Firecracker microVM](https://firecracker-microvm.github.io/) on [Fly](https://fly.io/), the entire torrent-fish instance consumes about 80MB of RAM and several KB/s of bandwidth. This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022). This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022).
 
 #### Under the Hood
 

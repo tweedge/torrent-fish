@@ -1,30 +1,33 @@
-FROM ubuntu:22.04
-LABEL maintainer="Chris Partridge <chris@partridge.tech>"
+# Build stage: install the libtorrent wheel into site-packages.
+# A full toolchain image is only needed here; none of it ships in the final image.
+FROM python:3.11-slim AS builder
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN pip install --no-cache-dir libtorrent==2.1.1
 
-USER root
-WORKDIR /opt
+# Keep build-only tooling out of the runtime image.
+RUN rm -rf /usr/local/lib/python3.11/site-packages/pip* \
+    /usr/local/lib/python3.11/site-packages/setuptools* \
+    /usr/local/lib/python3.11/site-packages/wheel*
 
-ENV LANG=en_US.UTF-8
-ENV LC_ALL=C.UTF-8
-ENV LANG=C.UTF-8
+# Runtime stage: distroless Python 3.11.
+# This image is built on distroless's "cc" base, which provides the libstdc++
+# and libgcc shared libraries that the libtorrent extension links against.
+# The :nonroot tag runs as uid 65532 and defaults to /home/nonroot.
+FROM gcr.io/distroless/python3-debian12:nonroot
 
-# install Python and libtorrent
-RUN ln -snf "/usr/share/zoneinfo/UTC" /etc/localtime && echo "UTC" > /etc/timezone && \
-    apt-get update -y && \
-    apt-get install -y \
-        python3 \
-        python3-libtorrent && \
-    # save some space 
-    rm -rf /var/lib/apt/lists/*
+# Bring in the installed packages from the build stage.
+COPY --from=builder /usr/local/lib/python3.11/site-packages \
+    /usr/local/lib/python3.11/site-packages
 
-# create less-privileged user
-RUN useradd --create-home fish && echo "fish:fish" | chpasswd
+# Without pip present, site-packages is not on sys.path by default.
+ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
+# Unbuffered output so logs stream, and no .pyc writes against the read-only paths.
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# copy torrent-fish.py into Docker
-COPY torrent-fish.py /home/fish/torrent-fish.py
+COPY --chown=nonroot:nonroot torrent-fish.py /home/nonroot/torrent-fish.py
 
-# set environment
-USER fish
-ENTRYPOINT ["python3", "-u", "/home/fish/torrent-fish.py"]
+USER nonroot:nonroot
+WORKDIR /home/nonroot
+
+ENTRYPOINT ["python3", "-u", "/home/nonroot/torrent-fish.py"]
