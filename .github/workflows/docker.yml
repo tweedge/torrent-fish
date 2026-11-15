@@ -133,3 +133,14 @@ jobs:
           tags: tweedge/torrent-fish:latest
           cache-from: type=gha,scope=test
           cache-to: type=gha,mode=max,scope=test
+
+      # Pushing an image does not update the Docker Hub overview; sync it from
+      # the repository README so the Hub page stays in step with Git.
+      - name: Update Docker Hub description
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: tweedge/torrent-fish
+          readme-filepath: ./README.md
