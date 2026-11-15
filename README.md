@@ -1,8 +1,10 @@
 # torrent-fish
 
-[![Pulls](https://img.shields.io/docker/pulls/tweedge/torrent-fish)](https://hub.docker.com/repository/docker/tweedge/torrent-fish)
 [![License](https://img.shields.io/github/license/tweedge/torrent-fish)](https://github.com/tweedge/torrent-fish)
-[![Code Style](https://img.shields.io/badge/code%20style-black-black)](https://github.com/psf/black)
+[![Pulls](https://img.shields.io/docker/pulls/tweedge/torrent-fish)](https://hub.docker.com/repository/docker/tweedge/torrent-fish)
+[![Written By](https://img.shields.io/badge/written%20by-some%20nerd-red.svg)](https://chris.partridge.tech)
+[![Follow author on Bluesky](https://img.shields.io/bluesky/followers/tweedge.net)](https://bsky.app/profile/tweedge.net)
+[![Follow author on Mastodon](https://img.shields.io/mastodon/follow/108210086817505115?domain=https%3A%2F%2Fcybersecurity.theater)](https://cybersecurity.theater/@tweedge)
 
 torrent-fish is a *metadata-only* BitTorrent peer built with libtorrent. It's designed to help keep magnet links which rely on [HTTP Seeding](https://wiki.vuze.com/w/HTTP_Seeding) healthy, without the overhead of running other peers or seeds.
 
@@ -12,7 +14,7 @@ Ok, you might think - but what's the point of a metadata-only peer?
 
 What? No way. You might have even used a magnet with an HTTP Seed before! Everything worked fine, right?
 
-#### Scenario 1. Active Swarm + HTTP Seeds: Works!
+#### Scenario 1: Active Swarm + HTTP Seeds: Works!
 
 A normal swarm with HTTP Seeds works well! It's economic, and helps diversify the content sources, and if the swam is healthy enough the HTTP Seed could even deactivate to save bandwidth. You can use a torrent or a magnet to start the download, and everything should work to get you that file quickly.
 
@@ -20,25 +22,25 @@ In the diagram below, make a quick note of the division between the original Bit
 
 ![Image 1](https://github.com/tweedge/torrent-fish/blob/main/diagrams/1_normal_swarm_with_http_seeds.png?raw=true)
 
-#### Scenario 2: No Swarm + HTTP Seeds + You Get a Magnet: *Doesn't work!*
+#### Scenario 2: No Swarm + HTTP Seeds + You Get a Torrent: Works!
 
-Now, the gap you might have seen in the above diagram is very real: while the magnet specification ([BEP9](https://www.bittorrent.org/beps/bep_0009.html)) provides a mechanism for peers to retrieve a torrent's metadata from other peers, *neither it nor either HTTP Seeding extension ([BEP17](https://www.bittorrent.org/beps/bep_0017.html) and [BEP19](https://www.bittorrent.org/beps/bep_0019.html)) provide a mechanism to fetch the torrent metadata from the HTTP Seeds.*
+If you do manage to get the torrent metadata (by starting with the torrent), you can download the entire torrent's contents from the HTTP Seed, even with nobody else in the swarm. The torrent file tells your client exactly which files and byte ranges to request from the HTTP Seed, so it can serve the content directly.
+
+![Image 2](https://github.com/tweedge/torrent-fish/blob/main/diagrams/2_client_has_torrent_with_only_http_seeds.png?raw=true)
+
+#### Scenario 3: No Swarm + HTTP Seeds + You Get a Magnet: *Doesn't work!*
+
+Now, the gap you might have seen in the above diagrams is very real: while the magnet specification ([BEP9](https://www.bittorrent.org/beps/bep_0009.html)) provides a mechanism for peers to retrieve a torrent's metadata from other peers, *neither it nor either HTTP Seeding extension ([BEP17](https://www.bittorrent.org/beps/bep_0017.html) and [BEP19](https://www.bittorrent.org/beps/bep_0019.html)) provide a mechanism to fetch the torrent metadata from the HTTP Seeds.*
 
 So if client has a magnet and nobody is in the swarm to provision them with a copy of the torrent, they can't fetch any content and will stall. *This is very bad!*
 
-![Image 2](https://github.com/tweedge/torrent-fish/blob/main/diagrams/2_client_has_magnet_with_only_http_seeds.png?raw=true)
+![Image 3](https://github.com/tweedge/torrent-fish/blob/main/diagrams/3_client_has_magnet_with_only_http_seeds.png?raw=true)
 
 *Note that magnets can include HTTP Seeds, but the inclusion of an HTTP Seed does **not** provide sufficient information for the torrent client to fetch the torrent metadata itself, and therefore the filenames/byte-ranges to request from that HTTP Seed are unknown to the client. This is why the download will stall if there are no peers or seeds in the swarm.*
 
-#### Scenario 3: No Swarm + HTTP Seeds + You Get a Torrent: Works!
-
-But for the sake of completeness, if you do manage to get the torrent metadata (either from a peer or by starting with the torrent), you can download the entire torrent's contents from the HTTP Seed, so...
-
-![Image 3](https://github.com/tweedge/torrent-fish/blob/main/diagrams/3_client_has_torrent_with_only_http_seeds.png?raw=true)
-
 #### Scenario 4: No Swarm + HTTP Seeds + You Get a Magnet + The Uploader Used torrent-fish: Everything is fixed!
 
-So, torrent-fish provides a solution to scenario 2. If the swarm is reasonably expected to be empty *at least sometimes*, torrent-fish is a lightweight script which performs the only essential task of a peer in that swarm: provisioning new peers with torrent metadata. After the torrent metadata has been provisioned to the new peer, the peer can use the HTTP Seed(s) to retrieve the content itself.
+So, torrent-fish provides a solution to scenario 3. If the swarm is reasonably expected to be empty *at least sometimes*, torrent-fish is a lightweight script which performs the only essential task of a peer in that swarm: provisioning new peers with torrent metadata. After the torrent metadata has been provisioned to the new peer, the peer can use the HTTP Seed(s) to retrieve the content itself.
 
 torrent-fish intentionally does not download any pieces of the torrent, so it can maintain as small a footprint as possible - it ensures the *health* of HTTP Seeded torrents, not availability or speed. Because of this narrow focus, torrent-fish is cheap, easy, and reliable - in certain situations, it should even be *much* cheaper than running a full-time seed in a usual torrent client.
 
@@ -90,8 +92,10 @@ Options:
   -c CONNECTIONS_LIMIT, --connections_limit=CONNECTIONS_LIMIT
                         the global limit on the number of connections opened.
   -l LOAD_PATH, --load-path=LOAD_PATH
-                        the path where the downloaded file/folder should be
-                        placed.
+                        the path to load torrent files from.
+  -s SAVE_PATH, --save-path=SAVE_PATH
+                        must be a valid folder BUT won't be used to download
+                        anything.
   -r PROXY_HOST, --proxy-host=PROXY_HOST
                         sets HTTP proxy host and port (separated by ':')
 ```
