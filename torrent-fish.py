@@ -211,7 +211,7 @@ def main() -> None:
         proxy_host="",
     )
 
-    (options, args) = parser.parse_args()
+    options, args = parser.parse_args()
 
     options.port = sanitize_port(options.port)
     options.max_upload_rate = convert_rate_limit(options.max_upload_rate)
