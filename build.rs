@@ -42,14 +42,15 @@ fn main() {
     // A fully static binary (scratch image) links libtorrent/boost/openssl
     // statically; otherwise link dynamically to the system library.
     let static_link = env::var("TF_STATIC_LINK").is_ok();
+    // Static libtorrent and boost reference each other, so the archives must be
+    // wrapped in --start-group/--end-group, which `cargo:rustc-link-lib` cannot
+    // express. Emit explicit link args (appended after our shim object, so the
+    // group resolves the shim's libtorrent references too).
+    println!("cargo:rustc-link-search=native=/usr/local/lib");
     if static_link {
-        // Static libs: cmake installs libtorrent to /usr/local/lib; Alpine's
-        // boost-static and openssl-libs-static land in /usr/lib.
-        println!("cargo:rustc-link-search=native=/usr/local/lib");
         println!("cargo:rustc-link-search=native=/usr/lib");
-        // libtorrent's static archive and its dependencies. Order matters:
-        // dependents first, then their dependencies.
-        println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+        println!("cargo:rustc-link-arg=-Wl,--start-group");
+        println!("cargo:rustc-link-arg=/usr/local/lib/libtorrent-rasterbar.a");
         for b in [
             "boost_system",
             "boost_filesystem",
@@ -58,11 +59,12 @@ fn main() {
             "boost_date_time",
             "boost_thread",
         ] {
-            println!("cargo:rustc-link-lib=static={b}");
+            println!("cargo:rustc-link-arg=/usr/lib/lib{b}.a");
         }
-        // libtorrent uses OpenSSL for hashing (sha1/sha256) and TLS.
-        println!("cargo:rustc-link-lib=static=ssl");
-        println!("cargo:rustc-link-lib=static=crypto");
+        println!("cargo:rustc-link-arg=/usr/lib/libssl.a");
+        println!("cargo:rustc-link-arg=/usr/lib/libcrypto.a");
+        println!("cargo:rustc-link-arg=/usr/lib/libz.a");
+        println!("cargo:rustc-link-arg=-Wl,--end-group");
     } else {
         println!("cargo:rustc-link-lib=torrent-rasterbar");
     }

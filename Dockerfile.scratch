@@ -13,7 +13,7 @@ FROM rust:alpine AS builder
 RUN apk add --no-cache \
     build-base musl-dev cmake ninja pkgconf git \
     openssl-dev openssl-libs-static \
-    boost-dev boost-static
+    boost-dev boost-static zlib-static
 
 # Build libtorrent statically against musl. Pin the version for reproducibility;
 # bump deliberately (libtorrent security fixes ship as new releases).
