@@ -66,6 +66,9 @@ fn main() {
         println!("cargo:rustc-link-arg=/usr/lib/libz.a");
         // openssl/libtorrent reference libc/libgcc symbols; include them in the
         // group so references resolve regardless of archive ordering.
+        // C++ runtime (std::chrono, operator new/delete) used by libtorrent.
+        println!("cargo:rustc-link-arg=-lstdc++");
+        println!("cargo:rustc-link-arg=-lgcc_eh");
         println!("cargo:rustc-link-arg=-Wl,--end-group");
         println!("cargo:rustc-link-arg=-lc");
         println!("cargo:rustc-link-arg=-lgcc");
