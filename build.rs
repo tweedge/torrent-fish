@@ -44,6 +44,10 @@ fn main() {
     let static_link = env::var("TF_STATIC_LINK").is_ok();
     if static_link {
         println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+        // libtorrent uses OpenSSL for hashing (sha1/sha256) and TLS; the static
+        // lib leaves these symbols undefined, so link them explicitly.
+        println!("cargo:rustc-link-lib=static=ssl");
+        println!("cargo:rustc-link-lib=static=crypto");
     } else {
         println!("cargo:rustc-link-lib=torrent-rasterbar");
     }
