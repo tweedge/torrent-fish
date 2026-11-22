@@ -68,83 +68,70 @@ jobs:
           open("test-torrents/test.torrent", "wb").write(lt.bencode(ct.generate()))
           PY
 
-      - name: Verify behavior — serves metadata, downloads no payload
-        run: |
-          set -euo pipefail
-          # distroless has no shell; run metrics mode (serves, then prints METRIC
-          # lines and exits) and drive a real magnet peer meanwhile.
-          docker run --rm --network host \
-            -v "$PWD/test-torrents:/opt/torrents:ro" \
-            -e TF_METRICS=1 -e TF_METRICS_SECS=6 \
-            torrent-fish:distroless -l /opt/torrents -s /home/nonroot -p 17801 \
-            > /tmp/metrics.txt 2>&1 &
-          FISH_PID=$!
-          sleep 2
-          python - "$PWD/test-torrents/test.torrent" 17801 <<'PY'
-          import sys, time, libtorrent as lt
-          tf, port = sys.argv[1], int(sys.argv[2])
-          ti = lt.torrent_info(tf)
-          ses = lt.session({"listen_interfaces":"127.0.0.1:0","enable_dht":False,"enable_lsd":False,"enable_upnp":False,"enable_natpmp":False})
-          atp = lt.parse_magnet_uri(lt.make_magnet_uri(ti)); atp.save_path="/tmp/client"; atp.peers=[("127.0.0.1",port)]
-          h = ses.add_torrent(atp)
-          end = time.time()+20
-          while time.time() < end:
-              if h.status().has_metadata:
-                  print("METADATA_SERVED_OK"); sys.exit(0)
-              time.sleep(0.2)
-          print("METADATA_NOT_SERVED", file=sys.stderr); sys.exit(1)
-          PY
-          wait $FISH_PID || true
-          cat /tmp/metrics.txt
-          grep -q "METRIC total_payload_download=0" /tmp/metrics.txt
-          grep -q "METRIC total_wanted=0" /tmp/metrics.txt
-          grep -q "METRIC upload_mode=1" /tmp/metrics.txt
-          grep -q "METRIC auto_managed=0" /tmp/metrics.txt
-          grep -q "METRIC has_metadata=1" /tmp/metrics.txt
-          echo "verified: metadata served; zero payload downloaded"
+      - name: Verify behavior — distroless (serves metadata, no payload)
+        run: ./scripts/verify-container.sh torrent-fish:distroless 17801 /home/nonroot
 
-      - name: Confirm non-root and measure images
+      - name: Verify behavior — scratch (serves metadata, no payload)
+        if: steps.scratch.outcome == 'success'
+        run: ./scripts/verify-container.sh torrent-fish:scratch 17803 /tmp
+
+      - name: Measure images (size, dependencies, RAM)
         run: |
           R="${GITHUB_STEP_SUMMARY}"
-          USER_SPEC=$(docker inspect --format '{{.Config.User}}' torrent-fish:distroless)
-          echo "configured user: '$USER_SPEC'"
-          case "$USER_SPEC" in nonroot*|65532*) ;; *) echo "not nonroot"; exit 1;; esac
+          OUT="/tmp/measurement.md"
+          {
+            echo "## Container measurement"
+            echo ""
+            echo "| image | unpacked | packages (syft) |"
+            echo "|---|---|---|"
+          } | tee "$OUT"
 
-          echo "## Container measurement" >> "$R"; echo "" >> "$R"
-          echo "| image | unpacked | packages (syft) |" >> "$R"
-          echo "|---|---|---|" >> "$R"
           measure() {
             local tag="$1"
             if ! docker image inspect "$tag" >/dev/null 2>&1; then
-              echo "| $tag | (build skipped/failed) | - |" >> "$R"; return
+              echo "| $tag | (not built) | - |" | tee -a "$OUT"; return
             fi
             local size pkgs mb
             size=$(docker image inspect "$tag" -f '{{.Size}}')
             pkgs=$(syft "$tag" -o json 2>/dev/null | python -c 'import sys,json;print(len(json.load(sys.stdin)["artifacts"]))' 2>/dev/null || echo n/a)
             mb=$(awk "BEGIN{printf \"%.1f\", $size/1e6}")
-            echo "| $tag | ${mb} MB | $pkgs |" >> "$R"
+            echo "| $tag | ${mb} MB | $pkgs |" | tee -a "$OUT"
           }
-          measure torrent-fish:distroless || true
-          measure torrent-fish:scratch || true
+          measure torrent-fish:distroless
+          measure torrent-fish:scratch
 
-          echo "" >> "$R"
-          echo "<details><summary>distroless packages (syft)</summary>" >> "$R"; echo "" >> "$R"
-          echo '```' >> "$R"
-          syft torrent-fish:distroless -o list 2>/dev/null | head -100 >> "$R" || true
-          echo '```' >> "$R"; echo "</details>" >> "$R"
+          {
+            echo ""
+            echo "<details><summary>distroless packages (syft)</summary>"
+            echo ""
+            echo '```'
+          } >> "$OUT"
+          syft torrent-fish:distroless -o list 2>/dev/null | head -120 >> "$OUT" || true
+          echo '```' >> "$OUT"; echo "</details>" >> "$OUT"
 
-          echo "### Behavior" >> "$R"; echo "" >> "$R"; echo '```' >> "$R"
-          cat /tmp/metrics.txt >> "$R" || true; echo '```' >> "$R"
+          {
+            echo ""
+            echo "### Behavior"
+            echo ""
+            echo '```'
+            cat /tmp/metrics-torrent-fish_distroless.txt 2>/dev/null || true
+            echo '```'
+          } >> "$OUT"
+
+          cat "$OUT" >> "$R"
 
       - name: Measure runtime RAM while serving
         run: |
-          set -euo pipefail
-          docker run -d --name fish-ram --network host \
-            -v "$PWD/test-torrents:/opt/torrents:ro" \
-            -e TF_METRICS=1 -e TF_METRICS_SECS=30 \
-            torrent-fish:distroless -l /opt/torrents -s /home/nonroot -p 17802
-          sleep 3
-          python - "$PWD/test-torrents/test.torrent" 17802 <<'PY' || true
+          R="${GITHUB_STEP_SUMMARY}"
+          RAM() {
+            local tag="$1" port="$2" save="$3" name="$4"
+            [ "$(docker image inspect "$tag" >/dev/null 2>&1 && echo y)" = y ] || return
+            docker run -d --name "$name" --network host \
+              -v "$PWD/test-torrents:/opt/torrents:ro" \
+              -e TF_METRICS=1 -e TF_METRICS_SECS=30 \
+              "$tag" -l /opt/torrents -s "$save" -p "$port" >/dev/null
+            sleep 3
+            python3 - "$PWD/test-torrents/test.torrent" "$port" <<'PY' || true
           import sys, time, libtorrent as lt
           tf, port = sys.argv[1], int(sys.argv[2])
           ti = lt.torrent_info(tf)
@@ -155,12 +142,33 @@ jobs:
           while time.time() < end and not h.status().has_metadata: time.sleep(0.2)
           time.sleep(2)
           PY
-          CID=$(docker ps -q --filter name=fish-ram)
-          MEM=$(docker stats --no-stream --format '{{.MemUsage}}' "$CID")
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "distroless memory usage while serving: **$MEM**" >> "$GITHUB_STEP_SUMMARY"
-          echo "memory: $MEM"
-          docker rm -f fish-ram || true
+            local cid mem
+            cid=$(docker ps -q --filter "name=$name")
+            mem=$(docker stats --no-stream --format '{{.MemUsage}}' "$cid")
+            echo "| $tag | $mem |" >> /tmp/ram.md
+            echo "- $tag memory while serving: **$mem**" >> "$R"
+            docker rm -f "$name" >/dev/null || true
+          }
+          echo "| image | memory (RSS) while serving |" > /tmp/ram.md
+          echo "|---|---|" >> /tmp/ram.md
+          RAM torrent-fish:distroless 17805 /home/nonroot fish-ram-d
+          RAM torrent-fish:scratch 17806 /tmp fish-ram-s
+          echo "" >> "$R"
+          echo "### Runtime memory" >> "$R"
+          echo "" >> "$R"
+          cat /tmp/ram.md >> "$R"
+          echo "" >> /tmp/measurement.md
+          echo "### Runtime memory" >> /tmp/measurement.md
+          echo "" >> /tmp/measurement.md
+          cat /tmp/ram.md >> /tmp/measurement.md
+
+      - name: Upload measurement report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measurement-report
+          path: /tmp/measurement.md
+          if-no-files-found: warn
 
       - name: Report scratch build status
         if: always()
