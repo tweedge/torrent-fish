@@ -37,6 +37,11 @@ jobs:
       - name: Build host binary (magnet-peer probe + fixture check)
         run: cargo build --release --locked
 
+      - name: Set up QEMU
+        # Required for the arm64 half of the multi-arch build/push: the builder
+        # stage compiles natively, so arm64 layers need binfmt emulation.
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -50,34 +55,11 @@ jobs:
           cache-from: type=gha,scope=distroless
           cache-to: type=gha,mode=max,scope=distroless
 
-      - name: Build scratch image (static musl)
-        id: scratch
-        continue-on-error: true
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.scratch
-          load: true
-          tags: torrent-fish:scratch
-          cache-from: type=gha,scope=scratch
-          cache-to: type=gha,mode=max,scope=scratch
-
-      - name: Verify behavior — distroless (serves metadata, no payload)
+      - name: Verify behavior (serves metadata, no payload)
         run: ./scripts/verify-container.sh torrent-fish:distroless ./target/release/torrent-fish 17801 /home/nonroot
 
-      - name: Verify behavior — scratch (serves metadata, no payload)
-        if: always()
-        run: ./scripts/verify-container.sh torrent-fish:scratch ./target/release/torrent-fish 17803 /tmp
-
-      - name: Report scratch build status
-        if: always()
-        run: |
-          if [ "${{ steps.scratch.outcome }}" != "success" ]; then
-            echo ">:warning: scratch (static musl) image build did not complete; \`latest\` remains distroless." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # Security-relevant: emit an SBOM for the shipped (distroless) image.
-      - name: Generate SBOM (distroless)
+      # Security-relevant: emit an SBOM for the shipped image.
+      - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
           image: torrent-fish:distroless
@@ -92,7 +74,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Push multi-arch distroless image
+      - name: Push multi-arch image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:

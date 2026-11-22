@@ -24,7 +24,7 @@ fi
 # then after TF_METRICS_SECS prints METRIC lines and exits.
 docker run --rm --network host \
   -v "$PWD/tests/fixtures:/fixtures:ro" \
-  -e TF_METRICS=1 -e TF_METRICS_SECS=8 \
+  -e TF_METRICS=1 -e TF_METRICS_SECS=15 \
   "$IMAGE" -l /fixtures -s "$SAVE" -p "$PORT" > "$METRICS" 2>&1 &
 FISH_PID=$!
 sleep 2

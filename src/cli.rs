@@ -56,6 +56,52 @@ pub fn sanitize_port(port: i64) -> u16 {
     }
 }
 
+/// True if `s` is an optionally-signed run of ASCII digits. Used to distinguish
+/// a numeric value that is merely too large for i128 (Python's arbitrary
+/// precision `int()` accepts any length) from genuine non-numeric input.
+fn is_integer_literal(s: &str) -> bool {
+    let d = s.strip_prefix(['+', '-']).unwrap_or(s);
+    !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Parse a port, mapping any out-of-range (including overflow) value to the
+/// default, mirroring Python's arbitrary-precision `int()` + `sanitize_port`.
+fn parse_port(v: &str) -> Result<u16, String> {
+    match v.parse::<i64>() {
+        Ok(n) => Ok(sanitize_port(n)),
+        Err(_) if is_integer_literal(v) => {
+            // Parse as i128 to handle slightly-larger values precisely, then
+            // fall back to the default for anything that still overflows.
+            match v.parse::<i128>() {
+                Ok(n) => Ok(sanitize_port(
+                    n.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+                )),
+                Err(_) => Ok(DEFAULT_PORT),
+            }
+        }
+        Err(_) => Err(format!("invalid port: {v}")),
+    }
+}
+
+/// Parse an integer, saturating values too large for i64 (Python's `int()` has
+/// no such limit) instead of erroring.
+fn parse_i64_lenient(v: &str) -> Result<i64, String> {
+    if let Ok(n) = v.parse::<i64>() {
+        return Ok(n);
+    }
+    if let Ok(n) = v.parse::<i128>() {
+        return Ok(n.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
+    }
+    if is_integer_literal(v) {
+        return Ok(if v.starts_with('-') {
+            i64::MIN
+        } else {
+            i64::MAX
+        });
+    }
+    Err(format!("invalid number: {v}"))
+}
+
 /// Convert a rate in kB/s to libtorrent's bytes/s limit (-1 means infinite).
 pub fn convert_rate_limit(rate_kbps: f64) -> i64 {
     let rate = (rate_kbps * 1000.0) as i64;
@@ -117,8 +163,10 @@ Options:
     .to_string()
 }
 
-/// Parse CLI args. Accepts both `--flag value` and `--flag=value`, plus the
-/// short forms from the Python CLI.
+/// Parse CLI args. Mirrors Python's `optparse` behavior:
+/// - `--flag value`, `--flag=value`, `-f value`, and glued `-fvalue`
+/// - non-option (positional) arguments are collected and ignored
+/// - `--` stops option parsing (the rest is positional/ignored)
 pub fn parse<I>(args: I) -> Result<ParseResult, String>
 where
     I: IntoIterator<Item = OsString>,
@@ -128,11 +176,24 @@ where
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .peekable();
+    let mut only_positional = false;
 
     while let Some(arg) = args.next() {
+        if only_positional {
+            continue; // positional token: ignored, like optparse
+        }
+        if arg == "--" {
+            only_positional = true;
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            continue; // positional argument: ignored, like optparse
+        }
+
+        // Split `--long=value`. Short glued values (`-p6881`) are handled below.
         let (flag, inline) = match arg.split_once('=') {
-            Some((f, v)) if f.starts_with('-') => (f.to_string(), Some(v.to_string())),
-            _ => (arg.clone(), None),
+            Some((f, v)) => (f.to_string(), Some(v.to_string())),
+            None => (arg.clone(), None),
         };
 
         let mut take = |name: &str| -> Result<String, String> {
@@ -148,8 +209,7 @@ where
             "-h" | "--help" => return Ok(ParseResult::Help(help_text())),
             "-p" | "--port" => {
                 let v = take("--port")?;
-                let n: i64 = v.parse().map_err(|_| format!("invalid port: {v}"))?;
-                opts.port = sanitize_port(n);
+                opts.port = parse_port(&v)?;
             }
             "-i" | "--listen-interface" => opts.listen_interface = take("--listen-interface")?,
             "-o" | "--outgoing-interface" => {
@@ -167,9 +227,7 @@ where
             }
             "-c" | "--connections_limit" | "--connections-limit" => {
                 let v = take("--connections_limit")?;
-                opts.connections_limit = v
-                    .parse()
-                    .map_err(|_| format!("invalid connection limit: {v}"))?;
+                opts.connections_limit = parse_i64_lenient(&v)?;
             }
             "-l" | "--load-path" => opts.load_path = take("--load-path")?,
             "-s" | "--save-path" => opts.save_path = take("--save-path")?,
@@ -177,11 +235,55 @@ where
                 let v = take("--proxy-host")?;
                 opts.proxy = parse_proxy_host(&v);
             }
+            other if is_glued_short(other) => {
+                // A short option with an attached value, e.g. `-p6881`.
+                let (short, value) = other.split_at(2);
+                apply_short(&mut opts, short, value.to_string())?;
+            }
             other => return Err(format!("no such option: {other}")),
         }
     }
 
     Ok(ParseResult::Run(opts))
+}
+
+/// `-Xvalue` where X is a known value-taking short option.
+fn is_glued_short(arg: &str) -> bool {
+    let bytes = arg.as_bytes();
+    bytes.len() > 2
+        && bytes[0] == b'-'
+        && bytes[1] != b'-'
+        && matches!(
+            bytes[1],
+            b'p' | b'i' | b'o' | b'd' | b'u' | b'c' | b'l' | b's' | b'r'
+        )
+}
+
+/// Apply a value-taking short option whose value was glued to the flag.
+fn apply_short(opts: &mut Options, short: &str, value: String) -> Result<(), String> {
+    match short {
+        "-p" => opts.port = parse_port(&value)?,
+        "-i" => opts.listen_interface = value,
+        "-o" => opts.outgoing_interface = value,
+        "-d" => {
+            let n: f64 = value
+                .parse()
+                .map_err(|_| format!("invalid rate: {value}"))?;
+            opts.max_download_rate = convert_rate_limit(n);
+        }
+        "-u" => {
+            let n: f64 = value
+                .parse()
+                .map_err(|_| format!("invalid rate: {value}"))?;
+            opts.max_upload_rate = convert_rate_limit(n);
+        }
+        "-c" => opts.connections_limit = parse_i64_lenient(&value)?,
+        "-l" => opts.load_path = value,
+        "-s" => opts.save_path = value,
+        "-r" => opts.proxy = parse_proxy_host(&value),
+        _ => return Err(format!("no such option: {short}")),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -250,6 +352,42 @@ mod tests {
     #[test]
     fn unknown_option_errors() {
         assert!(parse(args(&["--bogus"])).is_err());
+    }
+
+    #[test]
+    fn glued_short_option_values() {
+        assert_eq!(run(&["-p6881"]).port, 6881);
+        assert_eq!(run(&["-l/torrents"]).load_path, "/torrents");
+        assert_eq!(run(&["-s/save"]).save_path, "/save");
+        assert_eq!(run(&["-d100"]).max_download_rate, 100_000);
+    }
+
+    #[test]
+    fn positional_arguments_are_ignored() {
+        // optparse collected (and ignored) non-option tokens; options after a
+        // positional are still applied.
+        let o = run(&["/opt/torrents", "-p", "7000"]);
+        assert_eq!(o.port, 7000);
+        assert_eq!(run(&["--", "--port", "7000"]).port, 6881);
+    }
+
+    #[test]
+    fn oversized_numeric_values_fall_back() {
+        // Python's int() is arbitrary-precision; huge ports fall back to default
+        // rather than erroring.
+        assert_eq!(run(&["-p", "99999999999999999999"]).port, 6881);
+        // Huge connection limits saturate rather than erroring.
+        assert_eq!(
+            run(&["-c", "99999999999999999999"]).connections_limit,
+            i64::MAX
+        );
+    }
+
+    #[test]
+    fn parsed_ports_match_sanitize() {
+        for p in ["0", "1", "6881", "65535", "65536", "-5"] {
+            assert_eq!(run(&["-p", p]).port, sanitize_port(p.parse().unwrap()));
+        }
     }
 
     #[test]

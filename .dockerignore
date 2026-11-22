@@ -1,0 +1,6 @@
+# Keep the Docker build context small; only source needed to build is copied.
+/target
+/.git
+/.github
+/tests
+/sysroot

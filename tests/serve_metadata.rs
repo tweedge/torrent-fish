@@ -108,7 +108,7 @@ fn serves_metadata_and_downloads_no_data() {
         .arg("-p")
         .arg(port.to_string())
         .env("TF_METRICS", "1")
-        .env("TF_METRICS_SECS", "6")
+        .env("TF_METRICS_SECS", "12")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

@@ -31,9 +31,15 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // Mirror os.walk(followlinks=False): do not recurse into symlinked
+        // directories, but do include symlinked files (and anything that
+        // resolves to a regular file).
         match entry.file_type() {
             Ok(ft) if ft.is_dir() => walk(&path, out),
             Ok(ft) if ft.is_file() => out.push(path.to_string_lossy().into_owned()),
+            Ok(ft) if ft.is_symlink() && path.is_file() => {
+                out.push(path.to_string_lossy().into_owned());
+            }
             _ => {}
         }
     }

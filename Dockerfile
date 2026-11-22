@@ -12,7 +12,6 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY shim ./shim
-COPY tests ./tests
 RUN cargo build --release --locked
 
 # Collect the exact shared libraries the binary needs so we can copy them into
