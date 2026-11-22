@@ -8,48 +8,53 @@ on:
 permissions:
   contents: read
 
-jobs:
-  pytest:
-    name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-        include:
-          # ubuntu-latest (26.04) has no Python 3.9 build; use 24.04 for it.
-          - os: ubuntu-24.04
-            python-version: "3.9"
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install libtorrent pytest
-      - name: Run tests
-        run: pytest
+env:
+  CARGO_TERM_COLOR: always
 
-  lint:
-    name: lint
+jobs:
+  test:
+    name: test and lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install linters
+
+      - name: Install libtorrent and build dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install "black==26.10.1" mypy libtorrent
-      - name: Check formatting with black
-        run: black --check --diff .
-      - name: Type-check with mypy
-        run: mypy
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libtorrent-rasterbar-dev libboost-system-dev libssl-dev \
+            pkg-config build-essential cmake
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Install python libtorrent for the wire-level integration test
+        run: |
+          python3 -m pip install --user libtorrent
+
+      - name: Test
+        # The integration test uses a python libtorrent peer over the loopback to
+        # prove metadata is served on the wire; it self-skips if unavailable.
+        run: cargo test --release --locked -- --test-threads=1
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: torrent-fish-linux-amd64
+          path: target/release/torrent-fish
+          if-no-files-found: error

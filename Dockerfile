@@ -1,33 +1,33 @@
-# Build stage: install the libtorrent wheel into site-packages.
-# A full toolchain image is only needed here; none of it ships in the final image.
-FROM python:3.11-slim AS builder
+# Build stage: compile the Rust binary against libtorrent (Debian).
+# A full toolchain + libtorrent-dev only exists here; the runtime image is
+# distroless and ships just the binary and the shared libraries it needs.
+FROM rust:1-slim-bookworm AS builder
 
-RUN pip install --no-cache-dir libtorrent==2.1.1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libtorrent-rasterbar-dev libboost-system-dev libssl-dev \
+      pkg-config build-essential cmake \
+    && rm -rf /var/lib/apt/lists/*
 
-# Keep build-only tooling out of the runtime image.
-RUN rm -rf /usr/local/lib/python3.11/site-packages/pip* \
-    /usr/local/lib/python3.11/site-packages/setuptools* \
-    /usr/local/lib/python3.11/site-packages/wheel*
+WORKDIR /src
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+COPY shim ./shim
+COPY tests ./tests
+RUN cargo build --release --locked
 
-# Runtime stage: distroless Python 3.11.
-# This image is built on distroless's "cc" base, which provides the libstdc++
-# and libgcc shared libraries that the libtorrent extension links against.
-# The :nonroot tag runs as uid 65532 and defaults to /home/nonroot.
-FROM gcr.io/distroless/python3-debian12:nonroot
+# Collect the exact shared libraries the binary needs so we can copy them into
+# the distroless runtime below.
+RUN mkdir -p /out && cp target/release/torrent-fish /out/ && \
+    ldd target/release/torrent-fish \
+      | grep -oE '/[^ ]+\.so[^ ]*' \
+      | xargs -r -I{} cp --parents -L {} /out/
 
-# Bring in the installed packages from the build stage.
-COPY --from=builder /usr/local/lib/python3.11/site-packages \
-    /usr/local/lib/python3.11/site-packages
+# Runtime stage: distroless cc (ships libstdc++/libgcc), running as nonroot.
+FROM gcr.io/distroless/cc-debian12:nonroot
 
-# Without pip present, site-packages is not on sys.path by default.
-ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
-# Unbuffered output so logs stream, and no .pyc writes against the read-only paths.
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
-COPY --chown=nonroot:nonroot torrent-fish.py /home/nonroot/torrent-fish.py
+COPY --from=builder /out/ /
 
 USER nonroot:nonroot
 WORKDIR /home/nonroot
 
-ENTRYPOINT ["python3", "-u", "/home/nonroot/torrent-fish.py"]
+ENTRYPOINT ["/torrent-fish"]

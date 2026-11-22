@@ -1,0 +1,200 @@
+name: measure
+
+# Builds the container image variants and measures/compares them:
+#   - image size (compressed + uncompressed)
+#   - number of packages/dependencies (Syft SBOM)
+#   - runtime RAM (RSS) while serving
+#   - behavioral proof: serves metadata to a magnet peer, downloads no payload
+#
+# Runs on PRs (report only) and on main. The measured report is written to the
+# job summary and uploaded as an artifact.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  measure:
+    name: measure images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Syft (dependency/SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install python libtorrent (drive a real magnet peer)
+        run: python3 -m pip install --user libtorrent
+
+      - name: Create a test torrent
+        run: |
+          mkdir -p test-torrents content client
+          printf 'torrent-fish measurement payload\n' > content/hello.txt
+          python3 - <<'PY'
+          import libtorrent as lt
+          fs = lt.file_storage(); lt.add_files(fs, "content")
+          ct = lt.create_torrent(fs, piece_size=16384); lt.set_piece_hashes(ct, ".")
+          open("test-torrents/test.torrent", "wb").write(lt.bencode(ct.generate()))
+          PY
+
+      # ---- distroless image (dynamic linking, the default/proven image) ----
+      - name: Build distroless image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: torrent-fish:distroless
+          cache-from: type=gha,scope=distroless
+          cache-to: type=gha,mode=max,scope=distroless
+
+      # ---- scratch image (fully static musl) ----
+      - name: Build scratch image
+        id: scratch
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.scratch
+          load: true
+          tags: torrent-fish:scratch
+          cache-from: type=gha,scope=scratch
+          cache-to: type=gha,mode=max,scope=scratch
+
+      - name: Measure images
+        run: |
+          set -euo pipefail
+          REPORT="${GITHUB_STEP_SUMMARY}"
+          echo "## Container measurement" >> "$REPORT"
+          echo "" >> "$REPORT"
+          echo "| image | compressed | unpacked | packages (syft) |" >> "$REPORT"
+          echo "|---|---|---|---|" >> "$REPORT"
+
+          measure_image() {
+            local tag="$1"
+            if ! docker image inspect "$tag" >/dev/null 2>&1; then
+              echo "| $tag | (build skipped/failed) | - | - |" >> "$REPORT"
+              return
+            fi
+            local size comp pkgs
+            size=$(docker image inspect "$tag" -f '{{.Size}}')
+            comp=$(docker image ls --format '{{.Size}}' "$tag" | head -1)
+            pkgs=$(syft "$tag" -o json 2>/dev/null | jq '.artifacts | length' 2>/dev/null || echo "n/a")
+            local mb
+            mb=$(awk "BEGIN{printf \"%.1f\", $size/1000000}")
+            echo "| $tag | $comp | ${mb} MB | $pkgs |" >> "$REPORT"
+          }
+
+          measure_image torrent-fish:distroless
+          measure_image torrent-fish:scratch
+
+          # Full dependency listing for the (default) distroless image.
+          echo "" >> "$REPORT"
+          echo "<details><summary>distroless packages (syft)</summary>" >> "$REPORT"
+          echo "" >> "$REPORT"
+          echo '```' >> "$REPORT"
+          syft torrent-fish:distroless -o list 2>/dev/null | head -80 >> "$REPORT"
+          echo '```' >> "$REPORT"
+          echo "</details>" >> "$REPORT"
+
+      - name: Verify behavior (serve metadata, no payload) — distroless
+        run: |
+          set -euo pipefail
+          # distroless has no shell, so run the binary in metrics mode: it serves
+          # on the given port, then after TF_METRICS_SECS prints METRIC lines and
+          # exits. We drive a real magnet peer meanwhile and assert on stdout.
+          docker run --rm --network host \
+            -v "$PWD/test-torrents:/opt/torrents:ro" \
+            -e TF_METRICS=1 -e TF_METRICS_SECS=6 \
+            torrent-fish:distroless -l /opt/torrents -s /home/nonroot -p 17801 \
+            > /tmp/distroless-metrics.txt 2>&1 &
+          FISH_PID=$!
+          sleep 2
+          python3 - "$PWD/test-torrents/test.torrent" 17801 <<'PY'
+          import sys, time, libtorrent as lt
+          tf, port = sys.argv[1], int(sys.argv[2])
+          ti = lt.torrent_info(tf)
+          ses = lt.session({"listen_interfaces":"127.0.0.1:0","enable_dht":False,"enable_lsd":False,"enable_upnp":False,"enable_natpmp":False})
+          atp = lt.parse_magnet_uri(lt.make_magnet_uri(ti)); atp.save_path="/tmp/client"; atp.peers=[("127.0.0.1",port)]
+          h = ses.add_torrent(atp)
+          end = time.time()+20
+          while time.time() < end:
+              if h.status().has_metadata:
+                  print("METADATA_SERVED_OK"); sys.exit(0)
+              time.sleep(0.2)
+          print("METADATA_NOT_SERVED", file=sys.stderr); sys.exit(1)
+          PY
+          wait $FISH_PID || true
+          cat /tmp/distroless-metrics.txt
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Behavior" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/distroless-metrics.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -q "METRIC total_payload_download=0" /tmp/distroless-metrics.txt
+          grep -q "METRIC total_wanted=0" /tmp/distroless-metrics.txt
+          grep -q "METRIC upload_mode=1" /tmp/distroless-metrics.txt
+          grep -q "METRIC auto_managed=0" /tmp/distroless-metrics.txt
+          grep -q "METRIC has_metadata=1" /tmp/distroless-metrics.txt
+          echo "behavior verified: metadata served (magnet peer got metadata), zero payload downloaded"
+
+      - name: Measure runtime RAM (RSS) while serving — distroless
+        run: |
+          set -euo pipefail
+          docker run -d --name fish-ram --network host \
+            -v "$PWD/test-torrents:/opt/torrents:ro" \
+            -e TF_METRICS=1 -e TF_METRICS_SECS=30 \
+            torrent-fish:distroless -l /opt/torrents -s /home/nonroot -p 17802
+          sleep 3
+          # Drive a peer so the session is under load.
+          python3 - "$PWD/test-torrents/test.torrent" 17802 <<'PY' || true
+          import sys, time, libtorrent as lt
+          tf, port = sys.argv[1], int(sys.argv[2])
+          ti = lt.torrent_info(tf)
+          ses = lt.session({"listen_interfaces":"127.0.0.1:0","enable_dht":False,"enable_lsd":False,"enable_upnp":False,"enable_natpmp":False})
+          atp = lt.parse_magnet_uri(lt.make_magnet_uri(ti)); atp.save_path="/tmp/client"; atp.peers=[("127.0.0.1",port)]
+          h = ses.add_torrent(atp)
+          end = time.time()+8
+          while time.time() < end and not h.status().has_metadata: time.sleep(0.2)
+          time.sleep(2)
+          PY
+          # Read cgroup memory usage (works without a shell in the container).
+          CONTAINER_ID=$(docker ps -q --filter name=fish-ram)
+          RSS=$(docker stats --no-stream --format '{{.MemUsage}}' "$CONTAINER_ID")
+          echo "### Runtime RAM" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "distroless image memory usage while serving: **$RSS**" >> "$GITHUB_STEP_SUMMARY"
+          echo "distroless memory usage: $RSS"
+          docker rm -f fish-ram || true
+
+      - name: Report scratch build status
+        if: always()
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.scratch.outcome }}" = "success" ]; then
+            echo "scratch (static musl) image built successfully." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "scratch (static musl) image build did **not** complete; see the build log. \`latest\` remains on distroless." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save measurement to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measurement-report
+          path: |
+            /tmp/distroless-metrics.txt
+          if-no-files-found: ignore

@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1
+
+# Fully static musl build producing a `FROM scratch` image.
+#
+# NOTE: this image requires a static binary, which means statically building
+# libtorrent (+ its C++ runtime and OpenSSL) against musl. It is validated in CI,
+# not on the developer machine, and is published to the :scratch tag until it has
+# proven itself in CI. The default :latest image stays on the distroless build.
+
+# ---- Stage 1: build a fully static musl binary -------------------------------
+FROM rust:1.83-alpine AS builder
+
+RUN apk add --no-cache \
+    build-base musl-dev cmake ninja pkgconf git \
+    openssl-dev openssl-libs-static \
+    boost-dev
+
+# Build libtorrent statically against musl. Pin the version for reproducibility;
+# bump deliberately (libtorrent security fixes ship as new releases).
+ARG LIBTORRENT_VERSION=2.0.11
+RUN git clone --depth 1 --branch "libtorrent-${LIBTORRENT_VERSION}" \
+        --recurse-submodules https://github.com/arvidn/libtorrent.git /src/libtorrent \
+    || git clone --depth 1 --branch "v${LIBTORRENT_VERSION}" \
+        --recurse-submodules https://github.com/arvidn/libtorrent.git /src/libtorrent
+
+WORKDIR /src/libtorrent/build
+RUN cmake .. -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
+      -Dstatic_runtime=ON \
+      -Ddeprecated-functions=OFF \
+      -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    ninja -j"$(nproc)" install
+
+WORKDIR /src/app
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+COPY shim ./shim
+COPY tests ./tests
+
+# On Alpine the host target is already musl; crt-static makes the final link
+# fully static, including the C++ runtime.
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cargo build --release --locked
+
+# Fail the build early if the artifact is not self-contained.
+RUN ! readelf -lW target/release/torrent-fish | grep -q INTERP
+RUN ! readelf -dW target/release/torrent-fish 2>/dev/null | grep -q NEEDED
+
+# ---- Stage 2: scratch -------------------------------------------------------
+FROM scratch
+
+# CA bundle for HTTPS trackers / web seeds, and passwd/group so the numeric
+# non-root user resolves consistently. Docker supplies /etc/resolv.conf and
+# /etc/hosts at runtime; do not bake those in.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+COPY --from=builder /src/app/target/release/torrent-fish /torrent-fish
+
+USER 65532:65532
+ENTRYPOINT ["/torrent-fish"]
