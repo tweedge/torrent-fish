@@ -55,4 +55,13 @@ class Session {
 // libtorrent version string, for logging parity with the Python user agent.
 ::rust::String libtorrent_version();
 
+// Test/probe helper: act as a magnet-only BitTorrent client that fetches the
+// metadata for the torrent at `torrent_path` from a peer at 127.0.0.1:peer_port
+// (i.e. a torrent-fish instance). Network discovery is disabled so the fish peer
+// is the only source. Returns the torrent's name on success and throws if the
+// metadata is not received within `timeout_ms`. Used to prove, without Python,
+// that torrent-fish serves metadata.
+::rust::String probe_metadata(::rust::Str torrent_path, ::std::uint16_t peer_port,
+                              ::std::int64_t timeout_ms);
+
 }  // namespace torrentfish

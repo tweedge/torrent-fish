@@ -36,5 +36,7 @@ pub mod ffi {
         fn num_pieces(self: &Session) -> u32;
 
         fn libtorrent_version() -> String;
+
+        fn probe_metadata(torrent_path: &str, peer_port: u16, timeout_ms: i64) -> Result<String>;
     }
 }

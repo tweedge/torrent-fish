@@ -64,6 +64,43 @@ fn new_session(opts: &Options) -> cxx::UniquePtr<ffi::Session> {
 }
 
 fn main() -> ExitCode {
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+
+    // Hidden test/probe helper: fetch metadata for a torrent from a torrent-fish
+    // peer, proving metadata serving without any external torrent client.
+    // Usage: torrent-fish --probe-metadata <torrent> <port> [timeout_ms]
+    if args
+        .first()
+        .map(|a| a == "--probe-metadata")
+        .unwrap_or(false)
+    {
+        args.remove(0);
+        let torrent = args.first().map(|a| a.to_string_lossy().into_owned());
+        let port = args
+            .get(1)
+            .and_then(|p| p.to_str())
+            .and_then(|p| p.parse().ok());
+        let timeout = args
+            .get(2)
+            .and_then(|t| t.to_str())
+            .and_then(|t| t.parse().ok())
+            .unwrap_or(20_000);
+        let (Some(torrent), Some(port)) = (torrent, port) else {
+            eprintln!("usage: torrent-fish --probe-metadata <torrent> <port> [timeout_ms]");
+            return ExitCode::from(2);
+        };
+        return match ffi::probe_metadata(&torrent, port, timeout) {
+            Ok(name) => {
+                println!("PROBE_OK {name}");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("PROBE_FAILED {err}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
     let opts = match cli::parse(std::env::args_os().skip(1)) {
         Ok(ParseResult::Run(opts)) => opts,
         Ok(ParseResult::Help(text)) => {

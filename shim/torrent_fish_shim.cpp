@@ -9,7 +9,10 @@
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/version.hpp>
 
+#include <chrono>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace torrentfish {
@@ -168,5 +171,36 @@ std::unique_ptr<Session> new_session(
 }
 
 rust::String libtorrent_version() { return rust::String(lt::version()); }
+
+rust::String probe_metadata(rust::Str torrent_path, std::uint16_t peer_port,
+                            std::int64_t timeout_ms) {
+  auto ti = std::make_shared<lt::torrent_info>(std::string(torrent_path));
+
+  lt::settings_pack sp;
+  sp.set_str(lt::settings_pack::listen_interfaces, "127.0.0.1:0");
+  sp.set_bool(lt::settings_pack::enable_dht, false);
+  sp.set_bool(lt::settings_pack::enable_lsd, false);
+  sp.set_bool(lt::settings_pack::enable_upnp, false);
+  sp.set_bool(lt::settings_pack::enable_natpmp, false);
+  lt::session session(sp);
+
+  lt::add_torrent_params atp;
+  atp.info_hashes = ti->info_hashes();
+  atp.save_path = "/tmp/tf-probe-dl";
+  atp.peers.emplace_back(lt::make_address("127.0.0.1"), peer_port);
+  atp.flags |= lt::torrent_flags::upload_mode;  // we only want metadata
+  lt::torrent_handle h = session.add_torrent(atp);
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (h.status().has_metadata) {
+      auto tf = h.torrent_file();
+      return rust::String(tf ? tf->name() : std::string());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  throw std::runtime_error("metadata not received from peer within timeout");
+}
 
 }  // namespace torrentfish

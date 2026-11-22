@@ -1,8 +1,7 @@
 name: docker
 
 # Builds the container image, verifies behavior (serves metadata, downloads no
-# payload), measures size + dependency count + runtime RAM, and publishes to
-# Docker Hub on main.
+# payload), emits a security SBOM, and publishes to Docker Hub on main.
 
 on:
   push:
@@ -15,25 +14,31 @@ permissions:
 
 jobs:
   docker:
-    name: build, verify, measure
+    name: build, verify, publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python (drive a real magnet peer)
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Install libtorrent and build dependencies
+        # Needed to build the host binary used as the metadata-fetching peer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libtorrent-rasterbar-dev libboost-system-dev libssl-dev \
+            pkg-config build-essential cmake
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build host binary (magnet-peer probe + fixture check)
+        run: cargo build --release --locked
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Install Syft (dependency/SBOM)
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Install python libtorrent
-        run: python -m pip install libtorrent
 
       - name: Build distroless image
         uses: docker/build-push-action@v6
@@ -57,132 +62,28 @@ jobs:
           cache-from: type=gha,scope=scratch
           cache-to: type=gha,mode=max,scope=scratch
 
-      - name: Create a test torrent
-        run: |
-          mkdir -p test-torrents content client
-          printf 'torrent-fish measurement payload\n' > content/hello.txt
-          python - <<'PY'
-          import libtorrent as lt
-          fs = lt.file_storage(); lt.add_files(fs, "content")
-          ct = lt.create_torrent(fs, piece_size=16384); lt.set_piece_hashes(ct, ".")
-          open("test-torrents/test.torrent", "wb").write(lt.bencode(ct.generate()))
-          PY
-
       - name: Verify behavior — distroless (serves metadata, no payload)
-        run: ./scripts/verify-container.sh torrent-fish:distroless 17801 /home/nonroot
+        run: ./scripts/verify-container.sh torrent-fish:distroless ./target/release/torrent-fish 17801 /home/nonroot
 
       - name: Verify behavior — scratch (serves metadata, no payload)
         if: always()
-        run: ./scripts/verify-container.sh torrent-fish:scratch 17803 /tmp
-
-      - name: Measure images (size, dependencies, RAM)
-        run: |
-          R="${GITHUB_STEP_SUMMARY}"
-          OUT="/tmp/measurement.md"
-          {
-            echo "## Container measurement"
-            echo ""
-            echo "| image | unpacked | packages (syft) |"
-            echo "|---|---|---|"
-          } | tee "$OUT"
-
-          measure() {
-            local tag="$1"
-            if ! docker image inspect "$tag" >/dev/null 2>&1; then
-              echo "| $tag | (not built) | - |" | tee -a "$OUT"; return
-            fi
-            local size pkgs mb
-            size=$(docker image inspect "$tag" -f '{{.Size}}')
-            pkgs=$(syft "$tag" -o json 2>/dev/null | python -c 'import sys,json;print(len(json.load(sys.stdin)["artifacts"]))' 2>/dev/null || echo n/a)
-            mb=$(awk "BEGIN{printf \"%.1f\", $size/1e6}")
-            echo "| $tag | ${mb} MB | $pkgs |" | tee -a "$OUT"
-          }
-          measure torrent-fish:distroless
-          measure torrent-fish:scratch
-
-          {
-            echo ""
-            echo "<details><summary>distroless packages (syft)</summary>"
-            echo ""
-            echo '```'
-          } >> "$OUT"
-          syft torrent-fish:distroless -o list 2>/dev/null | head -120 >> "$OUT" || true
-          echo '```' >> "$OUT"; echo "</details>" >> "$OUT"
-
-          {
-            echo ""
-            echo "### Behavior"
-            echo ""
-            echo '```'
-            cat /tmp/metrics-torrent-fish_distroless.txt 2>/dev/null || true
-            echo '```'
-          } >> "$OUT"
-
-          cat "$OUT" >> "$R"
-
-      - name: Measure runtime RAM while serving
-        run: |
-          R="${GITHUB_STEP_SUMMARY}"
-          printf "| image | memory (RSS) while serving |\n|---|---|\n" > /tmp/ram.md
-          RAM() {
-            local tag="$1" port="$2" save="$3" name="$4"
-            if ! docker image inspect "$tag" >/dev/null 2>&1; then return; fi
-            docker rm -f "$name" >/dev/null 2>&1 || true
-            docker run -d --name "$name" --network host \
-              -v "$PWD/test-torrents:/opt/torrents:ro" \
-              -e TF_METRICS=1 -e TF_METRICS_SECS=40 \
-              "$tag" -l /opt/torrents -s "$save" -p "$port" >/dev/null
-            sleep 3
-            python3 - "$PWD/test-torrents/test.torrent" "$port" <<'PY' || true
-          import sys, time, libtorrent as lt
-          tf, port = sys.argv[1], int(sys.argv[2])
-          ti = lt.torrent_info(tf)
-          ses = lt.session({"listen_interfaces":"127.0.0.1:0","enable_dht":False,"enable_lsd":False,"enable_upnp":False,"enable_natpmp":False})
-          atp = lt.parse_magnet_uri(lt.make_magnet_uri(ti)); atp.save_path="/tmp/client"; atp.peers=[("127.0.0.1",port)]
-          h = ses.add_torrent(atp)
-          end = time.time()+8
-          while time.time() < end and not h.status().has_metadata: time.sleep(0.2)
-          time.sleep(2)
-          PY
-            local cid mem
-            cid=$(docker ps -q --filter "name=$name")
-            mem=$(docker stats --no-stream --format '{{.MemUsage}}' "$cid" 2>/dev/null || echo "n/a")
-            printf "| %s | %s |\n" "$tag" "$mem" >> /tmp/ram.md
-            docker rm -f "$name" >/dev/null 2>&1 || true
-          }
-          RAM torrent-fish:distroless 17805 /home/nonroot fish-ram-d
-          RAM torrent-fish:scratch 17806 /tmp fish-ram-s
-          {
-            echo ""
-            echo "### Runtime memory"
-            echo ""
-            cat /tmp/ram.md
-          } >> "$R"
-          {
-            echo ""
-            echo "### Runtime memory"
-            echo ""
-            cat /tmp/ram.md
-          } >> /tmp/measurement.md
-          cat /tmp/ram.md
-
-      - name: Upload measurement report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: measurement-report
-          path: /tmp/measurement.md
-          if-no-files-found: warn
+        run: ./scripts/verify-container.sh torrent-fish:scratch ./target/release/torrent-fish 17803 /tmp
 
       - name: Report scratch build status
         if: always()
         run: |
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.scratch.outcome }}" = "success" ]; then
-            echo "scratch (static musl) image built successfully." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "scratch (static musl) image build did **not** complete; see the build log. \`latest\` remains distroless." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.scratch.outcome }}" != "success" ]; then
+            echo ">:warning: scratch (static musl) image build did not complete; \`latest\` remains distroless." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Security-relevant: emit an SBOM for the shipped (distroless) image.
+      - name: Generate SBOM (distroless)
+        uses: anchore/sbom-action@v0
+        with:
+          image: torrent-fish:distroless
+          format: spdx-json
+          artifact-name: torrent-fish-distroless.spdx.json
+          output-file: torrent-fish-distroless.spdx.json
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
