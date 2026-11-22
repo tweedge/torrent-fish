@@ -43,9 +43,24 @@ fn main() {
     // statically; otherwise link dynamically to the system library.
     let static_link = env::var("TF_STATIC_LINK").is_ok();
     if static_link {
+        // Static libs: cmake installs libtorrent to /usr/local/lib; Alpine's
+        // boost-static and openssl-libs-static land in /usr/lib.
+        println!("cargo:rustc-link-search=native=/usr/local/lib");
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        // libtorrent's static archive and its dependencies. Order matters:
+        // dependents first, then their dependencies.
         println!("cargo:rustc-link-lib=static=torrent-rasterbar");
-        // libtorrent uses OpenSSL for hashing (sha1/sha256) and TLS; the static
-        // lib leaves these symbols undefined, so link them explicitly.
+        for b in [
+            "boost_system",
+            "boost_filesystem",
+            "boost_chrono",
+            "boost_random",
+            "boost_date_time",
+            "boost_thread",
+        ] {
+            println!("cargo:rustc-link-lib=static={b}");
+        }
+        // libtorrent uses OpenSSL for hashing (sha1/sha256) and TLS.
         println!("cargo:rustc-link-lib=static=ssl");
         println!("cargo:rustc-link-lib=static=crypto");
     } else {
