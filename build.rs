@@ -49,6 +49,8 @@ fn main() {
     println!("cargo:rustc-link-search=native=/usr/local/lib");
     if static_link {
         println!("cargo:rustc-link-search=native=/usr/lib");
+        // One group over everything (libtorrent, boost, ssl, zlib, libstdc++,
+        // libc) resolves the circular static dependencies regardless of order.
         println!("cargo:rustc-link-arg=-Wl,--start-group");
         println!("cargo:rustc-link-arg=/usr/local/lib/libtorrent-rasterbar.a");
         for b in [
@@ -64,14 +66,11 @@ fn main() {
         println!("cargo:rustc-link-arg=/usr/lib/libssl.a");
         println!("cargo:rustc-link-arg=/usr/lib/libcrypto.a");
         println!("cargo:rustc-link-arg=/usr/lib/libz.a");
-        // openssl/libtorrent reference libc/libgcc symbols; include them in the
-        // group so references resolve regardless of archive ordering.
-        // C++ runtime (std::chrono, operator new/delete) used by libtorrent.
         println!("cargo:rustc-link-arg=-lstdc++");
-        println!("cargo:rustc-link-arg=-lgcc_eh");
-        println!("cargo:rustc-link-arg=-Wl,--end-group");
-        println!("cargo:rustc-link-arg=-lc");
         println!("cargo:rustc-link-arg=-lgcc");
+        println!("cargo:rustc-link-arg=-lgcc_eh");
+        println!("cargo:rustc-link-arg=-lc");
+        println!("cargo:rustc-link-arg=-Wl,--end-group");
     } else {
         println!("cargo:rustc-link-lib=torrent-rasterbar");
     }
