@@ -38,9 +38,12 @@ COPY src ./src
 COPY shim ./shim
 COPY tests ./tests
 
-# On Alpine the host target is already musl; crt-static makes the final link
-# fully static, including the C++ runtime.
-ENV RUSTFLAGS="-C target-feature=+crt-static"
+# The Alpine host target is x86_64-unknown-linux-musl, which static-links by
+# default (crt-static is on), so we must NOT force +crt-static globally: that
+# would also apply to proc-macros (cxxbridge-macro), which need to be built as
+# dynamic dylibs and would otherwise fail. We only need to link the C++ libs
+# statically.
+ENV TF_STATIC_LINK=1
 RUN cargo build --release --locked
 
 # Fail the build early if the artifact is not self-contained.
