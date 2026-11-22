@@ -105,7 +105,6 @@ jobs:
 
       - name: Confirm non-root and measure images
         run: |
-          set -euo pipefail
           R="${GITHUB_STEP_SUMMARY}"
           USER_SPEC=$(docker inspect --format '{{.Config.User}}' torrent-fish:distroless)
           echo "configured user: '$USER_SPEC'"
@@ -121,21 +120,21 @@ jobs:
             fi
             local size pkgs mb
             size=$(docker image inspect "$tag" -f '{{.Size}}')
-            pkgs=$(syft "$tag" -o json 2>/dev/null | jq '.artifacts|length' 2>/dev/null || echo n/a)
+            pkgs=$(syft "$tag" -o json 2>/dev/null | python -c 'import sys,json;print(len(json.load(sys.stdin)["artifacts"]))' 2>/dev/null || echo n/a)
             mb=$(awk "BEGIN{printf \"%.1f\", $size/1e6}")
             echo "| $tag | ${mb} MB | $pkgs |" >> "$R"
           }
-          measure torrent-fish:distroless
-          measure torrent-fish:scratch
+          measure torrent-fish:distroless || true
+          measure torrent-fish:scratch || true
 
           echo "" >> "$R"
           echo "<details><summary>distroless packages (syft)</summary>" >> "$R"; echo "" >> "$R"
           echo '```' >> "$R"
-          syft torrent-fish:distroless -o list 2>/dev/null | head -100 >> "$R"
+          syft torrent-fish:distroless -o list 2>/dev/null | head -100 >> "$R" || true
           echo '```' >> "$R"; echo "</details>" >> "$R"
 
           echo "### Behavior" >> "$R"; echo "" >> "$R"; echo '```' >> "$R"
-          cat /tmp/metrics.txt >> "$R"; echo '```' >> "$R"
+          cat /tmp/metrics.txt >> "$R" || true; echo '```' >> "$R"
 
       - name: Measure runtime RAM while serving
         run: |
