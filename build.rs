@@ -64,7 +64,11 @@ fn main() {
         println!("cargo:rustc-link-arg=/usr/lib/libssl.a");
         println!("cargo:rustc-link-arg=/usr/lib/libcrypto.a");
         println!("cargo:rustc-link-arg=/usr/lib/libz.a");
+        // openssl/libtorrent reference libc/libgcc symbols; include them in the
+        // group so references resolve regardless of archive ordering.
         println!("cargo:rustc-link-arg=-Wl,--end-group");
+        println!("cargo:rustc-link-arg=-lc");
+        println!("cargo:rustc-link-arg=-lgcc");
     } else {
         println!("cargo:rustc-link-lib=torrent-rasterbar");
     }
