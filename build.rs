@@ -67,6 +67,7 @@ fn main() {
             "stdc++",
             "gcc",
             "gcc_eh",
+            "c",
         ] {
             println!("cargo:rustc-link-arg=-l{lib}");
         }
