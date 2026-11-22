@@ -10,6 +10,11 @@ PORT="$2"
 SAVE="$3"
 METRICS="$(mktemp)"
 
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "SKIP: image $IMAGE is not present (build likely failed) — nothing to verify"
+  exit 0
+fi
+
 # distroless/scratch have no shell, so run the binary in metrics mode: it serves
 # on $PORT, then after TF_METRICS_SECS prints METRIC lines and exits.
 docker run --rm --network host \

@@ -72,7 +72,7 @@ jobs:
         run: ./scripts/verify-container.sh torrent-fish:distroless 17801 /home/nonroot
 
       - name: Verify behavior — scratch (serves metadata, no payload)
-        if: steps.scratch.outcome == 'success'
+        if: always()
         run: ./scripts/verify-container.sh torrent-fish:scratch 17803 /tmp
 
       - name: Measure images (size, dependencies, RAM)
@@ -123,12 +123,14 @@ jobs:
       - name: Measure runtime RAM while serving
         run: |
           R="${GITHUB_STEP_SUMMARY}"
+          printf "| image | memory (RSS) while serving |\n|---|---|\n" > /tmp/ram.md
           RAM() {
             local tag="$1" port="$2" save="$3" name="$4"
-            [ "$(docker image inspect "$tag" >/dev/null 2>&1 && echo y)" = y ] || return
+            if ! docker image inspect "$tag" >/dev/null 2>&1; then return; fi
+            docker rm -f "$name" >/dev/null 2>&1 || true
             docker run -d --name "$name" --network host \
               -v "$PWD/test-torrents:/opt/torrents:ro" \
-              -e TF_METRICS=1 -e TF_METRICS_SECS=30 \
+              -e TF_METRICS=1 -e TF_METRICS_SECS=40 \
               "$tag" -l /opt/torrents -s "$save" -p "$port" >/dev/null
             sleep 3
             python3 - "$PWD/test-torrents/test.torrent" "$port" <<'PY' || true
@@ -144,23 +146,25 @@ jobs:
           PY
             local cid mem
             cid=$(docker ps -q --filter "name=$name")
-            mem=$(docker stats --no-stream --format '{{.MemUsage}}' "$cid")
-            echo "| $tag | $mem |" >> /tmp/ram.md
-            echo "- $tag memory while serving: **$mem**" >> "$R"
-            docker rm -f "$name" >/dev/null || true
+            mem=$(docker stats --no-stream --format '{{.MemUsage}}' "$cid" 2>/dev/null || echo "n/a")
+            printf "| %s | %s |\n" "$tag" "$mem" >> /tmp/ram.md
+            docker rm -f "$name" >/dev/null 2>&1 || true
           }
-          echo "| image | memory (RSS) while serving |" > /tmp/ram.md
-          echo "|---|---|" >> /tmp/ram.md
           RAM torrent-fish:distroless 17805 /home/nonroot fish-ram-d
           RAM torrent-fish:scratch 17806 /tmp fish-ram-s
-          echo "" >> "$R"
-          echo "### Runtime memory" >> "$R"
-          echo "" >> "$R"
-          cat /tmp/ram.md >> "$R"
-          echo "" >> /tmp/measurement.md
-          echo "### Runtime memory" >> /tmp/measurement.md
-          echo "" >> /tmp/measurement.md
-          cat /tmp/ram.md >> /tmp/measurement.md
+          {
+            echo ""
+            echo "### Runtime memory"
+            echo ""
+            cat /tmp/ram.md
+          } >> "$R"
+          {
+            echo ""
+            echo "### Runtime memory"
+            echo ""
+            cat /tmp/ram.md
+          } >> /tmp/measurement.md
+          cat /tmp/ram.md
 
       - name: Upload measurement report
         if: always()

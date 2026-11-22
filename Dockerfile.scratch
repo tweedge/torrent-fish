@@ -8,7 +8,7 @@
 # proven itself in CI. The default :latest image stays on the distroless build.
 
 # ---- Stage 1: build a fully static musl binary -------------------------------
-FROM rust:1.83-alpine AS builder
+FROM rust:alpine AS builder
 
 RUN apk add --no-cache \
     build-base musl-dev cmake ninja pkgconf git \
