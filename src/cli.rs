@@ -190,10 +190,16 @@ where
             continue; // positional argument: ignored, like optparse
         }
 
-        // Split `--long=value`. Short glued values (`-p6881`) are handled below.
-        let (flag, inline) = match arg.split_once('=') {
-            Some((f, v)) => (f.to_string(), Some(v.to_string())),
-            None => (arg.clone(), None),
+        // Only long options use `--flag=value`; split on `=` for those. For
+        // short options everything after the flag char is the (glued) value, so
+        // `-l/path=x` keeps `=x` rather than being split before glue handling.
+        let (flag, inline) = if let Some(rest) = arg.strip_prefix("--") {
+            match rest.split_once('=') {
+                Some((f, v)) => (format!("--{f}"), Some(v.to_string())),
+                None => (arg.clone(), None),
+            }
+        } else {
+            (arg.clone(), None)
         };
 
         let mut take = |name: &str| -> Result<String, String> {
@@ -360,6 +366,8 @@ mod tests {
         assert_eq!(run(&["-l/torrents"]).load_path, "/torrents");
         assert_eq!(run(&["-s/save"]).save_path, "/save");
         assert_eq!(run(&["-d100"]).max_download_rate, 100_000);
+        // A glued value containing '=' keeps the whole value (optparse parity).
+        assert_eq!(run(&["-l/path=x"]).load_path, "/path=x");
     }
 
     #[test]
