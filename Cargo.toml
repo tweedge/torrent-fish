@@ -1,0 +1,20 @@
+[package]
+name = "torrent-fish"
+version = "0.1.0"
+edition = "2021"
+description = "A metadata-only BitTorrent peer that keeps HTTP-seeded magnets healthy"
+license = "MIT"
+repository = "https://github.com/tweedge/torrent-fish"
+
+[[bin]]
+name = "torrent-fish"
+path = "src/main.rs"
+
+[dependencies]
+cxx = { version = "1", features = ["std"] }
+
+[build-dependencies]
+cxx-build = "1"
+
+[lints.clippy]
+all = "warn"

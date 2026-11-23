@@ -1,120 +1,71 @@
 name: docker
 
+# Builds the container image, verifies behavior (serves metadata, downloads no
+# payload), emits a security SBOM, and publishes to Docker Hub on main.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: build and test image
+  docker:
+    name: build, verify, publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Install libtorrent and build dependencies
+        # Needed to build the host binary used as the metadata-fetching peer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libtorrent-rasterbar-dev libboost-system-dev libssl-dev \
+            pkg-config build-essential cmake
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build host binary (magnet-peer probe + fixture check)
+        run: cargo build --release --locked
 
       - name: Set up QEMU
+        # Required for the arm64 half of the multi-arch build/push: the builder
+        # stage compiles natively, so arm64 layers need binfmt emulation.
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build distroless image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           load: true
-          tags: torrent-fish:test
-          cache-from: type=gha,scope=test
-          cache-to: type=gha,mode=max,scope=test
+          tags: torrent-fish:distroless
+          cache-from: type=gha,scope=distroless
+          cache-to: type=gha,mode=max,scope=distroless
 
-      # torrent-fish exits non-zero when the load path has no torrents, so use a
-      # real torrent with a short-lived session and assert it starts serving.
-      - name: Create a test torrent
-        run: |
-          pip install libtorrent==2.1.1
-          mkdir -p test-torrents content client
-          printf 'torrent-fish docker smoke test\n' > content/hello.txt
-          python3 - <<'PY'
-          import libtorrent as lt
-          fs = lt.file_storage()
-          lt.add_files(fs, "content")
-          torrent = lt.create_torrent(fs, piece_size=16384)
-          lt.set_piece_hashes(torrent, ".")
-          open("test-torrents/test.torrent", "wb").write(lt.bencode(torrent.generate()))
-          PY
+      - name: Verify behavior (serves metadata, no payload)
+        run: ./scripts/verify-container.sh torrent-fish:distroless ./target/release/torrent-fish 17801 /home/nonroot
 
-      - name: Run container and verify it starts
-        run: |
-          docker run -d --name fish \
-            -v "$PWD/test-torrents:/opt/torrents:ro" \
-            -p 6881:6881 \
-            torrent-fish:test -l /opt/torrents -s /home/nonroot
-          for i in $(seq 1 20); do
-            if docker logs fish 2>&1 | grep -q "Adding /opt/torrents/test.torrent"; then
-              break
-            fi
-            sleep 1
-          done
-          docker logs fish
-          docker logs fish 2>&1 | grep -q "Adding /opt/torrents/test.torrent"
-
-          test -z "$(docker ps -q --filter name=fish --filter status=exited)" \
-            || { echo "container exited unexpectedly"; docker logs fish; exit 1; }
-
-      - name: Verify the image serves torrent metadata
-        run: |
-          python3 - <<'PY'
-          import sys, time
-          import libtorrent as lt
-
-          ti = lt.torrent_info("test-torrents/test.torrent")
-          magnet = lt.make_magnet_uri(ti)
-
-          ses = lt.session({
-              "listen_interfaces": "127.0.0.1:0",
-              "enable_dht": False,
-              "enable_lsd": False,
-              "enable_upnp": False,
-              "enable_natpmp": False,
-          })
-          atp = lt.parse_magnet_uri(magnet)
-          atp.save_path = "client"
-          atp.peers = [("127.0.0.1", 6881)]
-          handle = ses.add_torrent(atp)
-
-          deadline = time.time() + 30
-          while time.time() < deadline:
-              if handle.status().has_metadata:
-                  print("metadata received from containerized torrent-fish")
-                  sys.exit(0)
-              time.sleep(0.2)
-          print("FAILED: no metadata received from container", file=sys.stderr)
-          sys.exit(1)
-          PY
-
-      - name: Confirm the container is not running as root
-        run: |
-          # distroless has no shell or `id`, so read the configured user from the
-          # image metadata instead of executing a command in the container.
-          USER_SPEC=$(docker inspect --format '{{.Config.User}}' torrent-fish:test)
-          echo "configured user: '$USER_SPEC'"
-          case "$USER_SPEC" in
-            nonroot*|65532*) ;;
-            *) echo "image does not run as nonroot"; exit 1 ;;
-          esac
-
-      - name: Stop container
-        if: always()
-        run: docker rm -f fish || true
+      # Security-relevant: emit an SBOM for the shipped image.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: torrent-fish:distroless
+          format: spdx-json
+          artifact-name: torrent-fish-distroless.spdx.json
+          output-file: torrent-fish-distroless.spdx.json
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -123,23 +74,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Push multi-arch image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: tweedge/torrent-fish:latest
-          cache-from: type=gha,scope=test
-          cache-to: type=gha,mode=max,scope=test
+          cache-from: type=gha,scope=distroless
+          cache-to: type=gha,mode=max,scope=distroless
 
-      # Pushing an image does not update the Docker Hub overview; sync it from
-      # the repository README so the Hub page stays in step with Git.
-      #
-      # This is cosmetic: a description update failure (e.g. a token that lacks
-      # the delete scope Docker Hub requires for metadata edits) should not fail
-      # an otherwise-good image publish, so it is non-blocking.
       - name: Update Docker Hub description
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         continue-on-error: true

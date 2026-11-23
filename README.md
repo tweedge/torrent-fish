@@ -67,14 +67,20 @@ So, torrent-fish is certainly niche, but not useless.
 Generally, to get started with torrent-fish you should make a directory of torrents that need to have their metadata served. Providing torrent-fish with that directory plus the default options should work in the vast majority of cases:
 
 ```
-% python3 torrent-fish.py -l <directory_with_torrents>
+% cargo run --release -- -l <directory_with_torrents>
+```
+
+or, using the published container:
+
+```
+% docker run --rm -p 6881:6881 -v /path/to/torrents:/opt -it tweedge/torrent-fish:latest
 ```
 
 However, the current list of available options is available with the --help flag:
 
 ```
-% python3 torrent-fish.py --help
-Usage: torrent-fish.py [options]
+% torrent-fish --help
+Usage: torrent-fish [options]
 
 Options:
   -h, --help            show this help message and exit
@@ -102,11 +108,13 @@ Options:
 
 #### Efficiency
 
-The Docker container for torrent-fish is very small, only about 28MB compressed. It's built from a [distroless](https://github.com/GoogleContainerTools/distroless) Python 3.11 base as a non-root user, so the runtime image contains only Python and the libtorrent wheel - no shell, package manager, or build toolchain. Distroless images keep the image small, give attackers far fewer tools to work with if they get in, and cut the noise from dependency scanners down to just what your application actually uses - see [this write-up on converting Python apps to distroless](https://chris.partridge.tech/2024/distroless-python-in-minutes/) for the details and tradeoffs. When run in a [Firecracker microVM](https://firecracker-microvm.github.io/) on [Fly](https://fly.io/), the entire torrent-fish instance consumes about 80MB of RAM and several KB/s of bandwidth. This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022).
+torrent-fish is written in Rust. The release binary is roughly half a megabyte and, because the Rust standard library is statically linked, it has almost no runtime dependencies of its own (libtorrent and the C++ runtime are the only shared libraries). The `Dockerfile` produces a [distroless](https://github.com/GoogleContainerTools/distroless) image as a non-root user, so the runtime image contains only the binary and the libtorrent/C++ runtime it needs - no shell, package manager, or build toolchain. Distroless images keep the image small, give attackers far fewer tools to work with if they get in, and cut the noise from dependency scanners down to just what your application actually uses - see [this write-up on converting Python apps to distroless](https://chris.partridge.tech/2024/distroless-python-in-minutes/) for the details and tradeoffs. The distroless image is roughly 16 MB with 11 packages when built, and idles at a few MB of RAM.
+
+`ci.yml` builds and tests the binary and proves the core invariant end-to-end (a magnet-only peer receives metadata while the peer downloads **zero payload bytes**). The test uses a real, vendored Big Buck Bunny torrent and the binary's own `--probe-metadata` mode as the peer, so it needs no Python or external torrent client. `docker.yml` builds the container image, verifies the same serve/no-payload behavior inside the container, and emits a security **SBOM** for the shipped image. When run in a [Firecracker microVM](https://firecracker-microvm.github.io/) on [Fly](https://fly.io/), the entire torrent-fish instance consumes only a few MB of RAM and several KB/s of bandwidth. This fits easily into Fly's smallest current offering - 1 core, 256MB RAM - *and* customers currently get three of those instances free-forever (as of May 2022).
 
 #### Under the Hood
 
-[libtorrent](https://www.libtorrent.org/) is a popular library that implements BitTorrent - you might use a BitTorrent client that also uses libtorrent, such as [Deluge](https://deluge-torrent.org/) or [qBittorrent](https://www.qbittorrent.org/). torrent-fish wraps libtorrent with pretty simple settings applied to every torrent:
+[libtorrent](https://www.libtorrent.org/) is a popular library that implements BitTorrent - you might use a BitTorrent client that also uses libtorrent, such as [Deluge](https://deluge-torrent.org/) or [qBittorrent](https://www.qbittorrent.org/). torrent-fish is a small Rust program that talks to libtorrent through a thin [CXX](https://cxx.rs/) bridge (`shim/`), applying a few simple settings to every torrent:
 
 * Each piece's priority is set to 0 (do not download)
 * `upload_mode` flag is enabled, so torrents are active but not downloading data
@@ -114,4 +122,4 @@ The Docker container for torrent-fish is very small, only about 28MB compressed.
 
 It should be possible to accomplish the desired results by using *either* setting the piece priorities *or* mucking about with the flags for each torrent, but I occasionally ran into issues where libtorrent would begin to request pieces (BitTorrent is supposed to download missing/corrupt pieces, after all!) and doing both doesn't seem to cause any problems.
 
-The script was originally a fork of François M.'s [retrieve.py](https://gist.github.com/francoism90/4db9efa5af546d831ca47208e58f3364) due to his clean usage of [libtorrent's bindings for Python](https://www.libtorrent.org/python_binding.html), though we accomplish very different goals with libtorrent. Francois' script gets a torrent from a magnet and exits; torrent-fish stays alive for as long as possible to convert any peer's magnet into a torrent.
+This project started life as a Python script (a fork of François M.'s [retrieve.py](https://gist.github.com/francoism90/4db9efa5af546d831ca47208e58f3364), due to his clean usage of libtorrent's bindings) and was later ported to Rust for a smaller runtime footprint and memory use while keeping the same behavior. Rust was chosen over a pure-Rust BitTorrent implementation (e.g. rqbit) specifically to keep libtorrent's maturity and stability. The existing Rust libtorrent binding crates were either abandoned or missing the APIs torrent-fish needs (loading a `.torrent` file, per-piece priorities, and the upload/auto-manage flags), so the CXX bridge here exposes exactly that small surface.
