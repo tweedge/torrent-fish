@@ -368,6 +368,11 @@ mod tests {
         assert_eq!(run(&["-d100"]).max_download_rate, 100_000);
         // A glued value containing '=' keeps the whole value (optparse parity).
         assert_eq!(run(&["-l/path=x"]).load_path, "/path=x");
+        // Real optparse does NOT strip a leading '=' from a glued short value:
+        // `-l=/x` yields load_path "=/x" and `-p=6881` is an invalid integer.
+        // Verified against Python's optparse; keep this parity.
+        assert_eq!(run(&["-l=/x"]).load_path, "=/x");
+        assert!(parse(args(&["-p=6881"])).is_err());
     }
 
     #[test]
